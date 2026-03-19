@@ -1,22 +1,37 @@
-use bevy::{
-    asset::RenderAssetUsages,
-    mesh::{MeshVertexAttribute, PrimitiveTopology},
-    prelude::*,
-    render::render_resource::RenderPassColorAttachment,
-};
+use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology, prelude::*};
+
+use crate::screens::Screen;
 
 pub struct TerrainRanderPlugin;
 
 impl Plugin for TerrainRanderPlugin {
     fn build(&self, app: &mut App) {
-        todo!()
+        app.add_systems(OnEnter(Screen::Gameplay), spawn_plane_dbg);
     }
+}
+
+fn spawn_plane_dbg(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let terrain = TerrainHeightMap {
+        smallest_quad: 0.2,
+        rings: 12,
+    };
+
+    let mesh = terrain.create_base_mesh();
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.2))),
+    ));
 }
 
 #[derive(Component)]
 pub struct TerrainHeightMap {
-    pub half_length: f32,
-    pub division_levels: u8,
+    pub smallest_quad: f32,
+    pub rings: u8,
 }
 
 struct QuadMeshBuilder {
@@ -43,7 +58,17 @@ impl QuadMeshBuilder {
                 .with_z(bottom_left.z + width),
         ]);
         self.indices
-            .extend_from_slice(&[o, o + 1, o + 2, o + 2, o + 1, o + 3]);
+            .extend_from_slice(&[o, o + 2, o + 1, o + 2, o + 3, o + 1]);
+    }
+
+    fn add_subdivided_quad(&mut self, bottom_left: Vec3, quad_width: f32, divisions: u8) {
+        for x in 0..divisions {
+            for y in 0..divisions {
+                let local_bottom_left =
+                    bottom_left + Vec3::X * quad_width * x as f32 + Vec3::Z * quad_width * y as f32;
+                self.add_quad(local_bottom_left, quad_width);
+            }
+        }
     }
 
     fn build(&self) -> Mesh {
@@ -58,46 +83,35 @@ impl QuadMeshBuilder {
 impl TerrainHeightMap {
     fn create_base_mesh(&self) -> Mesh {
         let mut m = QuadMeshBuilder::empty();
-        let mut quads_per_side_at_level = self.division_levels * 2;
-        let mut level_width = self.half_length * 2.0;
-        let mut quad_width = level_width / quads_per_side_at_level as f32;
-        let mut quad_depth = 1;
-        let mut bottom_left = Vec3::new(-self.half_length, 0.0, -self.half_length);
-        for level in 0..self.division_levels {
-            // one full row
-            for d in 0..quad_depth {
-                for i in 0..quads_per_side_at_level {
-                    m.add_quad(bottom_left + Vec3::X * i as f32 * quad_width, quad_width);
-                }
-                bottom_left += Vec3::new(0.0, 0.0, quad_width);
+        let mut bottom_left = Vec3::new(-self.smallest_quad * 8.0, 0.0, -self.smallest_quad * 8.0);
+        m.add_subdivided_quad(bottom_left, self.smallest_quad, 16);
+        let mut quad_size = self.smallest_quad;
+
+        for _ in 0..self.rings {
+            quad_size *= 2.0;
+            bottom_left -= Vec3::new(quad_size * 4.0, 0.0, quad_size * 4.0);
+            for (x, y) in [
+                (0.0, 0.0),
+                (0.0, 1.0),
+                (0.0, 2.0),
+                (0.0, 3.0),
+                (1.0, 0.0),
+                (1.0, 3.0),
+                (2.0, 0.0),
+                (2.0, 3.0),
+                (3.0, 0.0),
+                (3.0, 1.0),
+                (3.0, 2.0),
+                (3.0, 3.0),
+            ] {
+                m.add_subdivided_quad(
+                    bottom_left + Vec3::new(quad_size * x * 4.0, 0.0, quad_size * y * 4.0),
+                    quad_size,
+                    4,
+                );
             }
-            // TODO one full quad per side for the columns
-            // TODO one full row for the top
-            // prepare for next ring
-            quad_width *= 0.5;
-            quad_depth *= 2;
         }
 
-        todo!()
-    }
-
-    /// division levels start on theouter most ring at 0 and go up to division_levels - 1 at the center
-    fn quad_width_at_level(&self, division_level: u8) -> f32 {
-        let mut level_width = self.half_length * 2.0;
-        let mut quad_width = level_width / quads_per_side_at_level as f32;
-        for _ in 1..division_level {
-            level_width -= quad_width * 2.0;
-            quad_width *= 0.5;
-        }
-        quad_width
-    }
-
-    fn center_distance(a: Vec3) -> f32 {
-        let a = a.abs();
-        a.x.max(a.y)
-    }
-
-    fn step_right(division_level: u8) -> Vec3 {
-        todo!()
+        m.build()
     }
 }
