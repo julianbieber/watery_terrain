@@ -90,6 +90,7 @@ impl Plugin for TooltipPlugin {
 
 pub fn spawn_tooltip(
     mut commands: Commands,
+    screen: Screen,
     known_tooltips: &HashMap<String, Tooltip>,
     stack: &mut Vec<Entity>,
     text: &str,
@@ -99,6 +100,7 @@ pub fn spawn_tooltip(
     let font_size = 9.0;
     let entity = commands
         .spawn((
+            DespawnOnExit(screen),
             Node {
                 position_type: PositionType::Absolute,
                 left: at.0,
@@ -145,6 +147,7 @@ pub fn spawn_tooltip(
                                 if let Some(mouse) =window.cursor_position() {
                                     spawn_tooltip(
                                         commands,
+                                        screen,
                                         &known.tooltips,
                                         &mut stack.entities,
                                         &t,

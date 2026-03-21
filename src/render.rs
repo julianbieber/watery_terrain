@@ -7,8 +7,15 @@ pub struct TerrainRanderPlugin;
 impl Plugin for TerrainRanderPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(Screen::Gameplay), spawn_plane_dbg);
+        app.add_systems(Update, follow.run_if(in_state(Screen::Gameplay)));
     }
 }
+
+#[derive(Component)]
+pub struct FollowTerrainMarker;
+
+#[derive(Component)]
+struct TerrainMarker;
 
 fn spawn_plane_dbg(
     mut commands: Commands,
@@ -23,9 +30,20 @@ fn spawn_plane_dbg(
     let mesh = terrain.create_base_mesh();
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
+        TerrainMarker,
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.2))),
     ));
+}
+
+fn follow(
+    following: Single<&Transform, (With<FollowTerrainMarker>, Without<TerrainMarker>)>,
+    mut terrain: Query<&mut Transform, With<TerrainMarker>>,
+) {
+    for mut t in &mut terrain {
+        t.translation.x = following.translation.x;
+        t.translation.z = following.translation.z;
+    }
 }
 
 #[derive(Component)]

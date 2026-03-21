@@ -17,14 +17,14 @@ pub struct MainScreenPlugin;
 impl Plugin for MainScreenPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(TooltipPlugin);
-        app.add_systems(Startup, setup_camera);
+        app.add_systems(OnEnter(Screen::Main), setup_camera);
         app.add_systems(OnEnter(Screen::Main), setup_ui);
         app.add_systems(OnEnter(Screen::Help), setup_help);
     }
 }
 
 fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
+    commands.spawn((DespawnOnExit(Screen::Main), Camera2d));
 }
 
 fn setup_ui(mut commands: Commands) {
@@ -77,6 +77,7 @@ fn setup_help(
     known_toolips: Res<TooltipMap>,
     mut stack: ResMut<TooltipStack>,
 ) {
+    commands.spawn((DespawnOnExit(Screen::Help), Camera2d));
     commands.spawn((
         DespawnOnExit(Screen::Help),
         Node {
@@ -92,6 +93,7 @@ fn setup_help(
     ));
     spawn_tooltip(
         commands,
+        Screen::Help,
         &known_toolips.tooltips,
         &mut stack.entities,
         "Some text containing clickable words, and non clickable words\nand a line break",
