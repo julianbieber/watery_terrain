@@ -1,6 +1,6 @@
 use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology, prelude::*};
 
-use crate::screens::Screen;
+use crate::{heightmap::create_heightmap, screens::Screen};
 
 pub struct TerrainRanderPlugin;
 
@@ -22,17 +22,19 @@ fn spawn_plane_dbg(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let terrain = TerrainHeightMap {
+    let terrain = TerrainHeightMapMesh {
         smallest_quad: 0.2,
         rings: 12,
     };
 
+    let heightmap = create_heightmap();
     let mesh = terrain.create_base_mesh();
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         TerrainMarker,
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.2))),
+        heightmap,
     ));
 }
 
@@ -47,7 +49,7 @@ fn follow(
 }
 
 #[derive(Component)]
-pub struct TerrainHeightMap {
+pub struct TerrainHeightMapMesh {
     pub smallest_quad: f32,
     pub rings: u8,
 }
@@ -98,7 +100,7 @@ impl QuadMeshBuilder {
     }
 }
 
-impl TerrainHeightMap {
+impl TerrainHeightMapMesh {
     fn create_base_mesh(&self) -> Mesh {
         let mut m = QuadMeshBuilder::empty();
         let mut bottom_left = Vec3::new(-self.smallest_quad * 8.0, 0.0, -self.smallest_quad * 8.0);

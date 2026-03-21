@@ -3,6 +3,7 @@ use bevy::{feathers::FeathersPlugins, prelude::*};
 use crate::{render::TerrainRanderPlugin, screens::ScreenPlugin};
 
 mod gameplay;
+mod heightmap;
 mod main_screen;
 mod render;
 mod screens;
