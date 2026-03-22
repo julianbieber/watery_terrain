@@ -1,7 +1,7 @@
 use bevy::{
-    asset::{AssetPath, RenderAssetUsages, embedded_path},
+    asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
     mesh::PrimitiveTopology,
-    pbr::MaterialExtension,
+    pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
     render::render_resource::AsBindGroup,
     shader::ShaderRef,
@@ -13,6 +13,11 @@ pub struct TerrainRanderPlugin;
 
 impl Plugin for TerrainRanderPlugin {
     fn build(&self, app: &mut App) {
+        embedded_asset!(app, "terrain.wgsl");
+
+        app.add_plugins(MaterialPlugin::<
+            ExtendedMaterial<StandardMaterial, TerrainMaterial>,
+        >::default());
         app.add_systems(OnEnter(Screen::Gameplay), spawn_plane_dbg);
         app.add_systems(Update, follow.run_if(in_state(Screen::Gameplay)));
     }
@@ -27,7 +32,8 @@ struct TerrainMarker;
 fn spawn_plane_dbg(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let terrain = TerrainHeightMapMesh {
         smallest_quad: 0.2,
@@ -40,7 +46,12 @@ fn spawn_plane_dbg(
         DespawnOnExit(Screen::Gameplay),
         TerrainMarker,
         Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.2))),
+        MeshMaterial3d(materials.add(ExtendedMaterial {
+            base: Color::srgb(0.3, 0.5, 0.2).into(),
+            extension: TerrainMaterial {
+                height: images.add(heightmap.image()),
+            },
+        })),
         heightmap,
     ));
 }
