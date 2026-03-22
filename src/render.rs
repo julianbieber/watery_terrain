@@ -1,4 +1,11 @@
-use bevy::{asset::RenderAssetUsages, mesh::PrimitiveTopology, prelude::*};
+use bevy::{
+    asset::{AssetPath, RenderAssetUsages, embedded_path},
+    mesh::PrimitiveTopology,
+    pbr::MaterialExtension,
+    prelude::*,
+    render::render_resource::AsBindGroup,
+    shader::ShaderRef,
+};
 
 use crate::{heightmap::create_heightmap, screens::Screen};
 
@@ -133,5 +140,40 @@ impl TerrainHeightMapMesh {
         }
 
         m.build()
+    }
+}
+
+#[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
+struct TerrainMaterial {
+    #[texture(100)]
+    #[sampler(101)]
+    height: Handle<Image>,
+}
+
+impl MaterialExtension for TerrainMaterial {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("terrain.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn enable_prepass() -> bool {
+        true
+    }
+
+    fn enable_shadows() -> bool {
+        true
+    }
+
+    fn prepass_vertex_shader() -> bevy::shader::ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("terrain.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn deferred_vertex_shader() -> bevy::shader::ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("terrain.wgsl")).with_source("embedded"),
+        )
     }
 }
