@@ -47,12 +47,24 @@ fn spawn_plane_dbg(
         TerrainMarker,
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(ExtendedMaterial {
-            base: Color::srgb(0.3, 0.5, 0.2).into(),
+            base: StandardMaterial {
+                base_color: Color::Srgba(Srgba::GREEN),
+                ..Default::default()
+            },
             extension: TerrainMaterial {
                 height: images.add(heightmap.image()),
             },
         })),
         heightmap,
+    ));
+    commands.spawn((
+        PointLight {
+            shadows_enabled: true,
+            intensity: 4000.0,
+            range: 200.0,
+            ..default()
+        },
+        Transform::from_xyz(4.0, 20.0, 4.0),
     ));
 }
 
@@ -149,6 +161,7 @@ impl TerrainHeightMapMesh {
                 );
             }
         }
+        debug!(bottom_left = ?bottom_left, "last bottom left");
 
         m.build()
     }
