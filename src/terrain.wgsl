@@ -26,13 +26,12 @@ fn get_height(vertex_position_world: vec2f) -> vec4f {
     let U = textureLoad(height_texture, uv + vec2i( 0,  1), 0).r;
 
     let n = vec3f(
-        (L - R)*10.0 ,
+        (L - R)*1.0 ,
         1.0,    
-        (D - U)*10.0 
+        (D - U)*1.0 
     );
-    ;
-    
-    return vec4f(h* 10.0, normalize(n));
+
+    return vec4f(h* 30.0, normalize(n));
 }
 
 
@@ -42,9 +41,17 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     var out: VertexOutput;
     let model = mesh_functions::get_world_from_local(vertex.instance_index);
     out.world_position = model * vec4<f32>(vertex.position, 1.0);
-    let height = get_height(out.world_position.xz);
+    // let height = get_height(out.world_position.xz/1024.0);
+    let height = get_height(out.world_position.xz/10.0);
     out.world_position.y = height.x;
-    out.world_normal = height.yzw;
+
+    #ifdef MESHLET_MESH_MATERIAL_PASS
+    #else ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
+        out.world_normal = height.yzw;
+    #else ifdef PREPASS_PIPELINE
+    #else
+        out.world_normal = height.yzw;
+    #endif
 
     out.position = position_world_to_clip(out.world_position.xyz);
 

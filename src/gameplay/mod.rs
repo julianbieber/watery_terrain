@@ -19,7 +19,7 @@ fn spawn_player_camera(mut commands: Commands) {
         DespawnOnExit(Screen::Gameplay),
         Camera3d::default(),
         Transform::from_translation(Vec3::new(0.0, 20.0, -1.0)).looking_at(Vec3::ZERO, Vec3::Y),
-        FollowTerrainMarker,
+        // FollowTerrainMarker,
         FreeCamera::default(),
     ));
 }
