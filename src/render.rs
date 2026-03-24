@@ -36,8 +36,9 @@ fn spawn_plane_dbg(
     mut images: ResMut<Assets<Image>>,
 ) {
     let terrain = TerrainHeightMapMesh {
-        smallest_quad: 0.2,
-        rings: 12,
+        smallest_quad: 1.0,
+        rings: 5,
+        smallest_quad_count: 16 * 10,
     };
 
     let heightmap = create_heightmap();
@@ -75,8 +76,8 @@ fn follow(
     mut terrain: Query<&mut Transform, With<TerrainMarker>>,
 ) {
     for mut t in &mut terrain {
-        t.translation.x = following.translation.x;
-        t.translation.z = following.translation.z;
+        t.translation.x = following.translation.x.floor();
+        t.translation.z = following.translation.z.floor();
     }
 }
 
@@ -84,6 +85,7 @@ fn follow(
 pub struct TerrainHeightMapMesh {
     pub smallest_quad: f32,
     pub rings: u8,
+    pub smallest_quad_count: u8,
 }
 
 struct QuadMeshBuilder {
@@ -342,14 +344,28 @@ impl QuadMeshBuilder {
 
 impl TerrainHeightMapMesh {
     fn create_base_mesh(&self) -> Mesh {
+        assert!(self.smallest_quad_count % 4 == 0);
         let mut m = QuadMeshBuilder::empty();
-        let mut bottom_left = Vec3::new(-self.smallest_quad * 8.0, 0.0, -self.smallest_quad * 8.0);
-        m.add_subdivided_quad(bottom_left, self.smallest_quad, 16, None);
+        let mut bottom_left = Vec3::new(
+            -self.smallest_quad * self.smallest_quad_count as f32 * 0.5,
+            0.0,
+            -self.smallest_quad * self.smallest_quad_count as f32 * 0.5,
+        );
+        m.add_subdivided_quad(
+            bottom_left,
+            self.smallest_quad,
+            self.smallest_quad_count,
+            None,
+        );
         let mut quad_size = self.smallest_quad;
 
         for _ in 0..self.rings {
             quad_size *= 2.0;
-            bottom_left -= Vec3::new(quad_size * 4.0, 0.0, quad_size * 4.0);
+            bottom_left -= Vec3::new(
+                quad_size * (self.smallest_quad_count / 4) as f32,
+                0.0,
+                quad_size * (self.smallest_quad_count / 4) as f32,
+            );
             for (x, y, dir) in [
                 (0.0, 0.0, None),
                 (0.0, 1.0, Some(DirectionForTiple::Right)),
@@ -365,9 +381,14 @@ impl TerrainHeightMapMesh {
                 (3.0, 3.0, None),
             ] {
                 m.add_subdivided_quad(
-                    bottom_left + Vec3::new(quad_size * x * 4.0, 0.0, quad_size * y * 4.0),
+                    bottom_left
+                        + Vec3::new(
+                            quad_size * x * (self.smallest_quad_count / 4) as f32,
+                            0.0,
+                            quad_size * y * (self.smallest_quad_count / 4) as f32,
+                        ),
                     quad_size,
-                    4,
+                    self.smallest_quad_count / 4,
                     dir,
                 );
             }
