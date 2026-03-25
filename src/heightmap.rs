@@ -3,7 +3,7 @@ use bevy::{
     ecs::component::Component,
     image::Image,
     math::{Mat3, Vec2, Vec3, Vec3Swizzles},
-    render::render_resource::Extent3d,
+    render::render_resource::{Extent3d, TextureUsages},
 };
 
 pub fn create_heightmap() -> Heightmap {
@@ -33,8 +33,21 @@ impl Heightmap {
         }
     }
     pub fn image(&self) -> Image {
-        let data: Vec<u8> = self.values.iter().flat_map(|v| v.to_le_bytes()).collect();
-        Image::new(
+        let data: Vec<u8> = self
+            .values
+            .iter()
+            .flat_map(|v| {
+                [
+                    v.to_le_bytes(),
+                    0.0f32.to_le_bytes(),
+                    0.0f32.to_le_bytes(),
+                    0.0f32.to_le_bytes(),
+                ]
+                .into_iter()
+                .flatten()
+            })
+            .collect();
+        let mut image = Image::new(
             Extent3d {
                 width: Self::DIM,
                 height: Self::DIM,
@@ -42,9 +55,12 @@ impl Heightmap {
             },
             bevy::render::render_resource::TextureDimension::D2,
             data,
-            bevy::render::render_resource::TextureFormat::R32Float,
+            bevy::render::render_resource::TextureFormat::Rgba32Float,
             RenderAssetUsages::all(),
-        )
+        );
+
+        image.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST;
+        image
     }
 
     pub fn get(&self, x: u32, y: u32) -> f32 {
