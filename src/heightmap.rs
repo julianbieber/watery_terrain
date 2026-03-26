@@ -33,20 +33,7 @@ impl Heightmap {
         }
     }
     pub fn image(&self) -> Image {
-        let data: Vec<u8> = self
-            .values
-            .iter()
-            .flat_map(|v| {
-                [
-                    v.to_le_bytes(),
-                    0.0f32.to_le_bytes(),
-                    0.0f32.to_le_bytes(),
-                    0.0f32.to_le_bytes(),
-                ]
-                .into_iter()
-                .flatten()
-            })
-            .collect();
+        let data: Vec<u8> = self.values.iter().flat_map(|v| v.to_le_bytes()).collect();
         let mut image = Image::new(
             Extent3d {
                 width: Self::DIM,
@@ -55,7 +42,7 @@ impl Heightmap {
             },
             bevy::render::render_resource::TextureDimension::D2,
             data,
-            bevy::render::render_resource::TextureFormat::Rgba32Float,
+            bevy::render::render_resource::TextureFormat::R32Float,
             RenderAssetUsages::all(),
         );
 

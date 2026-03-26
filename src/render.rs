@@ -110,11 +110,11 @@ fn init_water_render(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(
-                    bevy::render::render_resource::TextureFormat::Rgba32Float,
+                    bevy::render::render_resource::TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadOnly,
                 ),
                 texture_storage_2d(
-                    bevy::render::render_resource::TextureFormat::Rgba32Float,
+                    bevy::render::render_resource::TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::WriteOnly,
                 ),
             ),
