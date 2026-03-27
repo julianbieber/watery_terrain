@@ -2,6 +2,16 @@
 @group(0) @binding(0) var input: texture_storage_2d<r32float, read>;
 @group(0) @binding(1) var output: texture_storage_2d<r32float, write>;
 
+@group(0) @binding(2) var flow_x: texture_storage_2d<r32float, read_write>;
+@group(0) @binding(3) var flow_y: texture_storage_2d<r32float, read_write>;
+
+struct SimParams {
+    id: i32,
+    _pad: vec3f,
+};
+
+var<push_constant> sim: SimParams;
+
 
 fn get_height(location: vec2i) -> f32{
     return clamp(textureLoad(input, location), vec4f(0.0), vec4f(1.0)).x;
