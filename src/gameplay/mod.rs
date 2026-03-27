@@ -6,10 +6,7 @@ use bevy::{
 
 use crate::{
     heightmap::create_heightmap,
-    render::{
-        WaterHeightTexture,
-        clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
-    },
+    render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
     screens::Screen,
 };
 
@@ -48,11 +45,6 @@ fn spawn_plane_dbg(
     let heightmap = create_heightmap();
     let mesh = terrain.create_base_mesh();
     let heightmap_texture = images.add(heightmap.image());
-    let heightmap_texture_b = images.add(heightmap.image());
-    commands.insert_resource(WaterHeightTexture {
-        texture_a: heightmap_texture.clone(),
-        texture_b: heightmap_texture_b,
-    });
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         TerrainMarker,
@@ -67,7 +59,6 @@ fn spawn_plane_dbg(
                 height: heightmap_texture.clone(),
             },
         })),
-        heightmap,
     ));
     commands.spawn((
         PointLight {

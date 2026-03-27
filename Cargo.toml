@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = { version = "0.18", features  = ["experimental_bevy_feathers", "free_camera", "debug"]}
+bytemuck = { version = "1.25.0", features = ["derive"] }
 # Set max log levels. This helps avoid unwanted low-severity log spam, which can affect performance.
 log = { version = "0.4", features = [
     "max_level_debug",
