@@ -14,9 +14,17 @@ pub fn create_heightmap() -> Heightmap {
             let v = Vec2::new(x as f32 * 0.03, y as f32 * 0.03);
             let scope = mountain_noise(Vec3::new(v.y * 0.1, v.x * 0.1, 100.0));
             let h: f32 = mountain_noise(Vec3::new(v.x, v.y, 1.0)) * scope;
-            m.set(x, y, h);
+            m.set(x, y, h.abs());
         }
     }
+    m
+}
+
+pub fn create_heightmap_spike() -> Heightmap {
+    let mut m = Heightmap::zero();
+
+    m.set(1024, 1024, 5.0);
+
     m
 }
 

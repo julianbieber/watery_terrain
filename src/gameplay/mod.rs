@@ -5,7 +5,7 @@ use bevy::{
 };
 
 use crate::{
-    heightmap::create_heightmap,
+    heightmap::{create_heightmap, create_heightmap_spike},
     render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
     screens::Screen,
 };
@@ -37,7 +37,7 @@ fn spawn_plane_dbg(
     mut images: ResMut<Assets<Image>>,
 ) {
     let terrain = TerrainHeightMapMesh {
-        smallest_quad: 1.0,
+        smallest_quad: 0.1,
         rings: 5,
         smallest_quad_count: 16 * 10,
     };

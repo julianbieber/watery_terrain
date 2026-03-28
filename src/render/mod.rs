@@ -101,6 +101,15 @@ impl bevy::render::render_graph::Node for WaterRenderNode {
                 }),
             );
             pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
+
+            pass.set_push_constants(
+                0,
+                bytemuck::bytes_of(&SimParams {
+                    id: 1,
+                    _pad: Vec3::ZERO,
+                }),
+            );
+            pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
         }
         Ok(())
     }
