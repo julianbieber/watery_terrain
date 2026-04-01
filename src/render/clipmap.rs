@@ -6,12 +6,15 @@ use bevy::{
     render::render_resource::AsBindGroup,
     shader::ShaderRef,
 };
+// FOOO
 
 #[derive(Component)]
 pub struct FollowTerrainMarker;
 
 #[derive(Component)]
 pub struct TerrainMarker;
+
+// BAR
 
 pub fn follow(
     following: Single<&Transform, (With<FollowTerrainMarker>, Without<TerrainMarker>)>,
