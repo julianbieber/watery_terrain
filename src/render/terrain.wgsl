@@ -42,7 +42,7 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     let model = mesh_functions::get_world_from_local(vertex.instance_index);
     out.world_position = model * vec4<f32>(vertex.position, 1.0);
     // let height = get_height(out.world_position.xz/1024.0);
-    let height = get_height(out.world_position.xz*5.0);
+    let height = get_height(out.world_position.xz*10.0);
     out.world_position.y = height.x;
 
     #ifdef MESHLET_MESH_MATERIAL_PASS
@@ -51,9 +51,16 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     #else ifdef PREPASS_PIPELINE
     #else
         out.world_normal = height.yzw;
+        if abs(dot(height.xzw, vec3(0,1,0))) < 0.999 {
+            out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0);
+        } else {
+            out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0); // fallback for near-vertical normals
+        }
     #endif
 
     out.position = position_world_to_clip(out.world_position.xyz);
+
+    out.uv = abs((out.world_position.xz/200.0) % 1.0);
 
     return out;
 }
