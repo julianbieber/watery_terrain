@@ -38,12 +38,27 @@ fn set_flow_y(edge: vec2i, v: f32) {
     textureStore(flow_y, edge, vec4f(v, 0.0, 0.0, 0.0));
 }
 
+fn distance_from_displacement(p: vec2f) -> f32{
+    let l = arrayLength(&displacements);
+    var m = 10000000000.0;
+
+    for (var i: u32 = 0; i < l; i = i + 1) {
+        let c = displacements[i];
+        m = min(m, length(c.xy - p)-c.z);
+    }
+
+    return m;
+}
+
 // -------- pass 0: update flows on edges --------
 
 fn update_flows(invocation_id: vec3<u32>) {
     let size = vec2i(textureDimensions(input)); // (W,H)
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
+
+    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0);
+    let d = distance_from_displacement(p);
 
     // Horizontal edges (flow_x): (ex, y), ex in [0..W]
     if (x <= size.x && y < size.y) {
@@ -57,7 +72,10 @@ fn update_flows(invocation_id: vec3<u32>) {
             let right_cell = vec2i(ex,     ey);
 
             let hL = get_height(left_cell);
-            let hR = get_height(right_cell);
+            var hR = get_height(right_cell);
+            if d < 0.0 {
+                hR += -d;
+            }
 
             var f = get_flow_x(vec2i(ex, ey));
             let dh = hL - hR;
@@ -78,7 +96,10 @@ fn update_flows(invocation_id: vec3<u32>) {
             let up_cell   = vec2i(ex, ey);
 
             let hD = get_height(down_cell);
-            let hU = get_height(up_cell);
+            var hU = get_height(up_cell);
+            if d < 0.0 {
+                hU += -d;
+            }
 
             var f = get_flow_y(vec2i(ex, ey));
             let dh = hD - hU;

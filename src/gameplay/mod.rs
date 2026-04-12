@@ -8,6 +8,7 @@ use crate::{
     heightmap::create_heightmap,
     render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
     screens::Screen,
+    water_sim::WaterDisplacement,
 };
 
 pub struct GameplayPlugin;
@@ -51,7 +52,7 @@ fn spawn_plane_dbg(
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(ExtendedMaterial {
             base: StandardMaterial {
-                base_color: Color::Srgba(Srgba::GREEN),
+                base_color: Color::Srgba(Srgba::RED),
                 unlit: false,
                 ..Default::default()
             },
@@ -69,5 +70,14 @@ fn spawn_plane_dbg(
             ..default()
         },
         Transform::from_xyz(4.0, 220.0, 4.0),
+    ));
+
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(Vec3::ZERO),
+        WaterDisplacement {
+            radius: 20.0,
+            strength: 1.0,
+        },
     ));
 }

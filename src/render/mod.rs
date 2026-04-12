@@ -1,9 +1,6 @@
 pub mod clipmap;
 
-use bevy::{
-    asset::embedded_asset, pbr::ExtendedMaterial, prelude::*,
-    render::extract_resource::ExtractResourcePlugin,
-};
+use bevy::{asset::embedded_asset, pbr::ExtendedMaterial, prelude::*};
 
 use crate::{
     render::clipmap::{TerrainMaterial, follow},

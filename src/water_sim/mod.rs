@@ -31,6 +31,7 @@ impl Plugin for WaterSimPlugin {
         app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
         app.add_plugins(ExtractResourcePlugin::<DisplacementBufferMain>::default());
         app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
+        app.add_systems(Update, collect_displacements);
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
         render_app.add_systems(Render, prepare_water_bindgroups);
@@ -44,6 +45,27 @@ impl Plugin for WaterSimPlugin {
         render_graph.add_node(WaterRenderLabel, WaterRenderNode);
         render_graph.add_node_edge(WaterRenderLabel, bevy::render::graph::CameraDriverLabel);
         app.add_observer(init_internal_textures);
+    }
+}
+
+#[derive(Component)]
+pub struct WaterDisplacement {
+    pub radius: f32,
+    pub strength: f32,
+}
+
+fn collect_displacements(
+    d: Query<(&Transform, &WaterDisplacement)>,
+    mut buffer: ResMut<DisplacementBufferMain>,
+) {
+    buffer.buffer.clear();
+    for (t, w) in &d {
+        buffer.buffer.push(Vec4::new(
+            t.translation.x,
+            t.translation.z,
+            w.radius,
+            w.strength,
+        ));
     }
 }
 
