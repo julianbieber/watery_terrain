@@ -21,7 +21,6 @@ impl Plugin for TerrainRanderPlugin {
             ExtendedMaterial<StandardMaterial, TerrainMaterial>,
         >::default());
 
-        app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
         app.add_systems(Update, follow.run_if(in_state(Screen::Gameplay)));
         app.add_systems(Update, swap_textures.run_if(in_state(Screen::Gameplay)));
     }

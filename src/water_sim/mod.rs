@@ -4,16 +4,17 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup,
-        extract_resource::ExtractResource,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
         render_graph::{self, RenderGraph, RenderLabel},
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
-            PipelineCache, PushConstantRange, ShaderStages, TextureDimension, TextureUsages,
-            binding_types::texture_storage_2d,
+            PipelineCache, PushConstantRange, ShaderStages, StorageBuffer, TextureDimension,
+            TextureUsages,
+            binding_types::{storage_buffer_read_only, texture_storage_2d},
         },
-        renderer::RenderDevice,
+        renderer::{RenderDevice, RenderQueue},
         texture::GpuImage,
     },
 };
@@ -21,15 +22,23 @@ use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 
 use crate::render::clipmap::TerrainMaterial;
+
 pub struct WaterSimPlugin;
 
 impl Plugin for WaterSimPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "water.wgsl");
+        app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
+        app.add_plugins(ExtractResourcePlugin::<DisplacementBufferMain>::default());
+        app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
         render_app.add_systems(Render, prepare_water_bindgroups);
         render_app.insert_resource(WaterBindGroupsSwap(true));
+        let displacements = StorageBuffer::<Vec<Vec4>>::from(Vec::new());
+        render_app.insert_resource(DisplacementBuffer {
+            buffer: displacements,
+        });
 
         let mut render_graph = render_app.world_mut().resource_mut::<RenderGraph>();
         render_graph.add_node(WaterRenderLabel, WaterRenderNode);
@@ -49,8 +58,10 @@ struct WaterRenderPipeline {
 
 #[derive(Resource)]
 struct WaterBindGroups([BindGroup; 2]);
+
 #[derive(Resource)]
 struct WaterBindGroupsSwap(bool);
+
 struct WaterRenderNode;
 impl bevy::render::render_graph::Node for WaterRenderNode {
     fn run<'w>(
@@ -100,6 +111,7 @@ impl bevy::render::render_graph::Node for WaterRenderNode {
         s.0 = !s.0;
     }
 }
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct SimParams {
@@ -150,6 +162,7 @@ fn init_internal_textures(
     let flow_y = images.add(flow_y);
     let flow_x = images.add(flow_x);
     let water_height_2 = images.add(water_height_2);
+
     commands.insert_resource(WaterHeightTexture {
         texture_a: material.extension.height.clone(),
         texture_b: water_height_2,
@@ -157,6 +170,7 @@ fn init_internal_textures(
         flow_y,
     });
 }
+
 fn init_water_render(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -183,6 +197,7 @@ fn init_water_render(
                     bevy::render::render_resource::TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
+                storage_buffer_read_only::<Vec<Vec4>>(false),
             ),
         ),
     );
@@ -203,14 +218,23 @@ fn init_water_render(
         pipeline: update_pipeline,
     });
 }
+
 fn prepare_water_bindgroups(
     mut commands: Commands,
     pipeline: Res<WaterRenderPipeline>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     water_images: If<Res<WaterHeightTexture>>,
+    mut displacement: If<ResMut<DisplacementBuffer>>,
+    displacement_main: If<Res<DisplacementBufferMain>>,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
+    render_queue: Res<RenderQueue>,
 ) {
+    *displacement.0.buffer.get_mut() = displacement_main.buffer.clone();
+    displacement
+        .buffer
+        .write_buffer(&render_device, &render_queue);
+
     let tex_a = gpu_images.get(&water_images.texture_a).unwrap();
     let tex_b = gpu_images.get(&water_images.texture_b).unwrap();
     let flow_x = gpu_images.get(&water_images.flow_x).unwrap();
@@ -224,6 +248,7 @@ fn prepare_water_bindgroups(
             &tex_b.texture_view,
             &flow_x.texture_view,
             &flow_y.texture_view,
+            displacement.buffer.binding().unwrap(),
         )),
     );
     let bind_group_1 = render_device.create_bind_group(
@@ -234,14 +259,26 @@ fn prepare_water_bindgroups(
             &tex_a.texture_view,
             &flow_x.texture_view,
             &flow_y.texture_view,
+            displacement.buffer.binding().unwrap(),
         )),
     );
     commands.insert_resource(WaterBindGroups([bind_group_0, bind_group_1]));
 }
+
 #[derive(Resource, Clone, ExtractResource)]
 pub struct WaterHeightTexture {
     pub texture_a: Handle<Image>,
     pub texture_b: Handle<Image>,
     pub flow_x: Handle<Image>,
     pub flow_y: Handle<Image>,
+}
+
+#[derive(Resource, Clone, ExtractResource)]
+struct DisplacementBufferMain {
+    buffer: Vec<Vec4>,
+}
+
+#[derive(Resource)]
+struct DisplacementBuffer {
+    buffer: StorageBuffer<Vec<Vec4>>,
 }

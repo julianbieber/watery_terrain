@@ -4,6 +4,8 @@
 @group(0) @binding(2) var flow_x: texture_storage_2d<r32float, read_write>;
 @group(0) @binding(3) var flow_y: texture_storage_2d<r32float, read_write>;
 
+@group(0) @binding(4) var<storage, read> displacements: array<vec4f>;
+
 struct SimParams {
     id: i32,
     _pad: vec3f,
