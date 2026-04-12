@@ -1,5 +1,5 @@
 use bevy::{
-    asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
+    asset::{AssetPath, RenderAssetUsages, embedded_path},
     mesh::PrimitiveTopology,
     pbr::MaterialExtension,
     prelude::*,
@@ -278,6 +278,10 @@ impl QuadMeshBuilder {
     fn build(&self) -> Mesh {
         let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.vertices.clone());
+        let uvs = vec![Vec2::ZERO; self.vertices.len()];
+        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        let tangents = vec![Vec4::ZERO; self.vertices.len()];
+        m.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
         m.insert_indices(bevy::mesh::Indices::U32(self.indices.clone()));
 
         m

@@ -1,3 +1,7 @@
+use avian3d::{
+    PhysicsPlugins,
+    prelude::{Collider, Forces, Gravity, GravityScale, LinearVelocity, RigidBody},
+};
 use bevy::{
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
     pbr::ExtendedMaterial,
@@ -5,18 +9,22 @@ use bevy::{
 };
 
 use crate::{
-    heightmap::{create_heightmap, create_heightmap_spike},
+    heightmap::create_heightmap,
     render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
     screens::Screen,
+    water_sim::WaterDisplacement,
 };
 
 pub struct GameplayPlugin;
 
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(PhysicsPlugins::default());
+        app.insert_resource(Gravity::default());
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_plane_dbg);
+        app.add_systems(Update, move_boat.run_if(in_state(Screen::Gameplay)));
     }
 }
 
@@ -35,6 +43,8 @@ fn spawn_plane_dbg(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let terrain = TerrainHeightMapMesh {
         smallest_quad: 0.1,
@@ -51,7 +61,16 @@ fn spawn_plane_dbg(
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(ExtendedMaterial {
             base: StandardMaterial {
-                base_color: Color::Srgba(Srgba::GREEN),
+                base_color_texture: Some(
+                    asset_server.load("greymarble_7-4K/greymarble_7_basecolor-4K.png"),
+                ),
+                // metallic_roughness_texture: Some(
+                //     asset_server.load("greymarble_7-4K/greymarble_7_metallic-4K.png"),
+                // ),
+                normal_map_texture: Some(
+                    asset_server.load("greymarble_7-4K/greymarble_7_normal-4K.png"),
+                ),
+
                 unlit: false,
                 ..Default::default()
             },
@@ -68,6 +87,45 @@ fn spawn_plane_dbg(
             color: Color::Srgba(Srgba::BLUE),
             ..default()
         },
-        Transform::from_xyz(4.0, 220.0, 4.0),
+        Transform::from_xyz(4.0, 220.0, 4000.0),
     ));
+
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(Vec3::ZERO),
+        WaterDisplacement {
+            radius: 5.0,
+            strength: 1.0,
+        },
+        Collider::sphere(5.0),
+        RigidBody::Dynamic,
+        GravityScale(1.0),
+        Mesh3d(meshes.add(Sphere::new(5.0))),
+        MeshMaterial3d(standard_materials.add(Color::srgb_u8(124, 144, 255))),
+    ));
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(Vec3::new(10.0, 0.0, 20.0)),
+        WaterDisplacement {
+            radius: 15.0,
+            strength: 1.0,
+        },
+        Collider::sphere(15.0),
+        RigidBody::Dynamic,
+        GravityScale(1.0),
+        Mesh3d(meshes.add(Sphere::new(15.0))),
+        MeshMaterial3d(standard_materials.add(Color::srgb_u8(24, 144, 255))),
+    ));
+}
+
+fn move_boat(
+    mut boat: Query<&mut LinearVelocity, With<WaterDisplacement>>,
+    time: Res<Time>,
+    // cam: Single<&Transform, (With<Camera>, Without<WaterDisplacement>)>,
+) {
+    for mut b in &mut boat {
+        b.0.z += time.elapsed_secs().sin() * 0.01;
+        b.0.x +=
+            (time.elapsed_secs().cos() + ((time.elapsed_secs() * 0.3).sin().fract() * 2.0)) * 0.01;
+    }
 }

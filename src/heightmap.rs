@@ -20,6 +20,7 @@ pub fn create_heightmap() -> Heightmap {
     m
 }
 
+#[allow(dead_code)]
 pub fn create_heightmap_spike() -> Heightmap {
     let mut m = Heightmap::zero();
 
@@ -58,6 +59,7 @@ impl Heightmap {
         image
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, x: u32, y: u32) -> f32 {
         assert!(x < Self::DIM);
         assert!(y < Self::DIM);
