@@ -5,7 +5,7 @@ use bevy::{
 };
 
 use crate::{
-    heightmap::{create_heightmap, create_heightmap_spike},
+    heightmap::create_heightmap,
     render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
     screens::Screen,
 };

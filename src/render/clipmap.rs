@@ -1,5 +1,5 @@
 use bevy::{
-    asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
+    asset::{AssetPath, RenderAssetUsages, embedded_path},
     mesh::PrimitiveTopology,
     pbr::MaterialExtension,
     prelude::*,
