@@ -38,18 +38,33 @@ fn set_flow_y(edge: vec2i, v: f32) {
     textureStore(flow_y, edge, vec4f(v, 0.0, 0.0, 0.0));
 }
 
-fn distance_from_displacement(p: vec2f) -> f32{
+struct DisplacementResult {
+    distance: f32,
+    index: u32,
+}
+
+fn distance_from_displacement(p: vec2f) -> DisplacementResult {
     let l = arrayLength(&displacements);
     var m = 10000000000.0;
+    var current_min: u32 = 0;
 
     for (var i: u32 = 0; i < l; i = i + 1) {
         let c = displacements[i];
-        m = min(m, length(c.xy - p)-c.z);
+        let d = length(c.xy - p)-c.z;
+        if d < m {
+            m = d;
+            current_min = i;
+        }
     }
 
-    return m;
+    return DisplacementResult(m, current_min);
 }
 
+fn distance_from_specific(p: vec2f, i: u32) -> f32 {
+    let c = displacements[i];
+    let d = length(c.xy - p)-c.z;
+    return d;
+}
 // -------- pass 0: update flows on edges --------
 
 fn update_flows(invocation_id: vec3<u32>) {
@@ -57,7 +72,7 @@ fn update_flows(invocation_id: vec3<u32>) {
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
 
-    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0);
+    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 10.0;
     let d = distance_from_displacement(p);
 
     // Horizontal edges (flow_x): (ex, y), ex in [0..W]
@@ -73,14 +88,18 @@ fn update_flows(invocation_id: vec3<u32>) {
 
             let hL = get_height(left_cell);
             var hR = get_height(right_cell);
-            if d < 0.0 {
-                hR += -d;
-            }
-
             var f = get_flow_x(vec2i(ex, ey));
             let dh = hL - hR;
             // simple acceleration + damping
-            f = f *1. + dh * 0.0015;
+            f = f *0.99 + dh * 0.1125;
+            if d.distance < 0.0 {
+                let displacement_circle = displacements[d.index];
+                if p.x != displacement_circle.x || p.y != displacement_circle.y {
+                    let dir = normalize(p - displacement_circle.xy);
+                    f += dot(dir, vec2f(1.0, 0.0)) * 0.003;
+                }
+            }
+
             set_flow_x(vec2i(ex, ey), f);
         }
     }
@@ -97,13 +116,17 @@ fn update_flows(invocation_id: vec3<u32>) {
 
             let hD = get_height(down_cell);
             var hU = get_height(up_cell);
-            if d < 0.0 {
-                hU += -d;
-            }
 
             var f = get_flow_y(vec2i(ex, ey));
             let dh = hD - hU;
-            f = f *1. + dh * 0.0015;
+            f = f *0.99 + dh * 0.1125;
+            if d.distance < 0.0 {
+                let displacement_circle = displacements[d.index];
+                if p.x != displacement_circle.x || p.y != displacement_circle.y {
+                    let dir = normalize(p - displacement_circle.xy);
+                    f += dot(dir, vec2f(0.0, 1.0)) * 0.003;
+                }
+            }
             set_flow_y(vec2i(ex, ey), f);
         }
     }

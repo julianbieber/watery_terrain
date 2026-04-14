@@ -18,6 +18,7 @@ impl Plugin for GameplayPlugin {
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_plane_dbg);
+        app.add_systems(Update, move_boat.run_if(in_state(Screen::Gameplay)));
     }
 }
 
@@ -36,6 +37,7 @@ fn spawn_plane_dbg(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let terrain = TerrainHeightMapMesh {
         smallest_quad: 0.1,
@@ -76,8 +78,32 @@ fn spawn_plane_dbg(
         DespawnOnExit(Screen::Gameplay),
         Transform::from_translation(Vec3::ZERO),
         WaterDisplacement {
-            radius: 20.0,
+            radius: 5.0,
             strength: 1.0,
         },
+        Mesh3d(meshes.add(Sphere::new(5.0))),
+        MeshMaterial3d(standard_materials.add(Color::srgb_u8(124, 144, 255))),
     ));
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(Vec3::new(10.0, 0.0, 20.0)),
+        WaterDisplacement {
+            radius: 15.0,
+            strength: 1.0,
+        },
+        Mesh3d(meshes.add(Sphere::new(15.0))),
+        MeshMaterial3d(standard_materials.add(Color::srgb_u8(24, 144, 255))),
+    ));
+}
+
+fn move_boat(
+    mut boat: Query<&mut Transform, With<WaterDisplacement>>,
+    time: Res<Time>,
+    // cam: Single<&Transform, (With<Camera>, Without<WaterDisplacement>)>,
+) {
+    for mut b in &mut boat {
+        b.translation.z += time.elapsed_secs().sin() * 0.1;
+        b.translation.x +=
+            (time.elapsed_secs().cos() + ((time.elapsed_secs() * 0.3).sin().fract() * 2.0)) * 0.1;
+    }
 }
