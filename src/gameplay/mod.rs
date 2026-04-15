@@ -38,6 +38,7 @@ fn spawn_plane_dbg(
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let terrain = TerrainHeightMapMesh {
         smallest_quad: 0.1,
@@ -54,7 +55,10 @@ fn spawn_plane_dbg(
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(ExtendedMaterial {
             base: StandardMaterial {
-                base_color: Color::Srgba(Srgba::RED),
+                base_color_texture: Some(
+                    asset_server.load("greymarble_7-4K/greymarble_7_basecolor-4K.png"),
+                ),
+
                 unlit: false,
                 ..Default::default()
             },
