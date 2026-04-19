@@ -51,6 +51,11 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     #else ifdef PREPASS_PIPELINE
     #else
         out.world_normal = height.yzw;
+        if abs(dot(height.xzw, vec3(0,1,0))) < 0.999 {
+            out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0);
+        } else {
+            out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0); // fallback for near-vertical normals
+        }
     #endif
 
     out.position = position_world_to_clip(out.world_position.xyz);

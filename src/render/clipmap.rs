@@ -280,6 +280,8 @@ impl QuadMeshBuilder {
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.vertices.clone());
         let uvs = vec![Vec2::ZERO; self.vertices.len()];
         m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        let tangents = vec![Vec4::ZERO; self.vertices.len()];
+        m.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
         m.insert_indices(bevy::mesh::Indices::U32(self.indices.clone()));
 
         m

@@ -58,6 +58,12 @@ fn spawn_plane_dbg(
                 base_color_texture: Some(
                     asset_server.load("greymarble_7-4K/greymarble_7_basecolor-4K.png"),
                 ),
+                // metallic_roughness_texture: Some(
+                //     asset_server.load("greymarble_7-4K/greymarble_7_metallic-4K.png"),
+                // ),
+                normal_map_texture: Some(
+                    asset_server.load("greymarble_7-4K/greymarble_7_normal-4K.png"),
+                ),
 
                 unlit: false,
                 ..Default::default()
@@ -75,7 +81,7 @@ fn spawn_plane_dbg(
             color: Color::Srgba(Srgba::BLUE),
             ..default()
         },
-        Transform::from_xyz(4.0, 220.0, 4.0),
+        Transform::from_xyz(4.0, 220.0, 4000.0),
     ));
 
     commands.spawn((
