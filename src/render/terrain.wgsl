@@ -55,5 +55,7 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
 
     out.position = position_world_to_clip(out.world_position.xyz);
 
+    out.uv = abs((out.world_position.xz/200.0) % 1.0);
+
     return out;
 }

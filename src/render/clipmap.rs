@@ -278,6 +278,8 @@ impl QuadMeshBuilder {
     fn build(&self) -> Mesh {
         let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.vertices.clone());
+        let uvs = vec![Vec2::ZERO; self.vertices.len()];
+        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
         m.insert_indices(bevy::mesh::Indices::U32(self.indices.clone()));
 
         m
