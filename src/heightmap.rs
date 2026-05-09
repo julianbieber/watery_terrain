@@ -1,3 +1,5 @@
+use core::f32;
+
 use bevy::{
     asset::RenderAssetUsages,
     ecs::component::Component,
@@ -87,7 +89,7 @@ impl Heightmap {
 fn hash3(p: Vec2) -> Vec3 {
     let p3 = (Vec3::new(p.x, p.x, p.y) * 0.1031).fract();
     let p3 = p3 + p3.dot(Vec3::new(p3.y, p3.z, p3.x) + 33.33);
-    ((p3.xxy() + p3.yzz()) * p3.zyx() * Vec3::splat(0.3183099)).fract()
+    ((p3.xxy() + p3.yzz()) * p3.zyx() * Vec3::splat(f32::consts::FRAC_1_PI)).fract()
 }
 
 #[allow(dead_code)]
@@ -115,20 +117,20 @@ fn voronoise(x: Vec2, u: f32, v: f32) -> f32 {
 #[allow(dead_code)]
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = (x - edge0) / (edge1 - edge0);
-    let clamped = t.max(0.0).min(1.0);
+    let clamped = t.clamp(0.0, 1.0);
     clamped * clamped * (3.0 - 2.0 * clamped)
 }
 
 #[allow(dead_code)]
 pub fn hash22(i: Vec2) -> Vec2 {
     let mut h = i * Vec2::new(127.1, 311.7);
-    h = (h.fract() * 43758.5453123).fract();
+    h = (h.fract() * 43_758.547).fract();
     h
 }
 
 pub fn hash21(i: Vec2) -> f32 {
     let mut h = i.dot(Vec2::new(127.1, 311.7));
-    h = (h.fract() * 43758.5453123).fract();
+    h = (h.fract() * 43_758.547).fract();
     h
 }
 

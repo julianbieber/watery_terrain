@@ -119,7 +119,7 @@ impl bevy::render::render_graph::Node for WaterRenderNode {
                 .get_compute_pipeline(pipeline.pipeline)
                 .unwrap();
             pass.set_bind_group(0, &bind_groups.0[swap.0 as usize], &[]);
-            pass.set_pipeline(&update_pipeline);
+            pass.set_pipeline(update_pipeline);
 
             pass.set_push_constants(
                 0,
@@ -173,7 +173,6 @@ fn init_internal_textures(
         },
         TextureDimension::D2,
         (0..((water_height.width() + 1) * water_height.height()))
-            .into_iter()
             .flat_map(|_| 0.0f32.to_le_bytes())
             .collect(),
         bevy::render::render_resource::TextureFormat::R32Float,
@@ -188,7 +187,6 @@ fn init_internal_textures(
         },
         TextureDimension::D2,
         (0..(water_height.width() * (water_height.height() + 1)))
-            .into_iter()
             .flat_map(|_| 0.0f32.to_le_bytes())
             .collect(),
         bevy::render::render_resource::TextureFormat::R32Float,

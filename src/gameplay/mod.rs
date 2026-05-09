@@ -1,6 +1,6 @@
 use avian3d::{
     PhysicsPlugins,
-    prelude::{Collider, Forces, Gravity, GravityScale, LinearVelocity, RigidBody},
+    prelude::{Collider, Gravity, GravityScale, LinearVelocity, RigidBody},
 };
 use bevy::{
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
