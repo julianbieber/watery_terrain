@@ -72,7 +72,7 @@ fn update_flows(invocation_id: vec3<u32>) {
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
 
-    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 10.0;
+    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 5.0;
     let d = distance_from_displacement(p);
 
     // Horizontal edges (flow_x): (ex, y), ex in [0..W]
@@ -96,7 +96,7 @@ fn update_flows(invocation_id: vec3<u32>) {
                 let displacement_circle = displacements[d.index];
                 if p.x != displacement_circle.x || p.y != displacement_circle.y {
                     let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(1.0, 0.0)) * 0.003;
+                    f += dot(dir, vec2f(1.0, 0.0)) * displacement_circle.w * 0.1 * 0.003;
                 }
             }
 
@@ -124,7 +124,7 @@ fn update_flows(invocation_id: vec3<u32>) {
                 let displacement_circle = displacements[d.index];
                 if p.x != displacement_circle.x || p.y != displacement_circle.y {
                     let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(0.0, 1.0)) * 0.003;
+                    f += dot(dir, vec2f(0.0, 1.0)) * displacement_circle.w*0.1 * 0.003;
                 }
             }
             set_flow_y(vec2i(ex, ey), f);
