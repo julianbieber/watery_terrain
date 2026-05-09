@@ -68,21 +68,17 @@ fn collect_displacements(
     buffer.buffer.clear();
     for (mut velocity, transform, w) in &mut d {
         let h = height_from_texture(water, transform.translation.xz());
-        info!(
-            water_height = h,
-            object_height = transform.translation.y,
-            radius = w.radius,
-            "collect displacements"
-        );
-        if transform.translation.y + w.radius < h {
+        if transform.translation.y < h {
+            let t_h = transform.translation.y;
+            let depth = h - (t_h);
             buffer.buffer.push(Vec4::new(
                 transform.translation.x,
                 transform.translation.z,
                 w.radius,
-                w.strength,
+                w.strength * depth,
             ));
-            let t_h = transform.translation.y;
-            velocity.0.y += (h - t_h + w.radius) * 0.1;
+            // velocity.0 *= 0.8;
+            velocity.0.y = depth * 1.0;
         }
     }
 }

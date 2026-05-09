@@ -42,7 +42,7 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     let model = mesh_functions::get_world_from_local(vertex.instance_index);
     out.world_position = model * vec4<f32>(vertex.position, 1.0);
     // let height = get_height(out.world_position.xz/1024.0);
-    let height = get_height(out.world_position.xz*10.0);
+    let height = get_height(out.world_position.xz*5.0);
     out.world_position.y = height.x;
 
     #ifdef MESHLET_MESH_MATERIAL_PASS
