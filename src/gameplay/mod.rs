@@ -4,6 +4,7 @@ use avian3d::{
 };
 use bevy::{
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
+    image::ImageLoaderSettings,
     pbr::ExtendedMaterial,
     prelude::*,
 };
@@ -61,17 +62,29 @@ fn spawn_plane_dbg(
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(ExtendedMaterial {
             base: StandardMaterial {
-                base_color_texture: Some(
-                    asset_server.load("greymarble_7-4K/greymarble_7_basecolor-4K.png"),
+                base_color_texture: Some(asset_server.load("water/base_color.png")),
+                emissive_texture: Some(asset_server.load("water/emissive.png")),
+                normal_map_texture: Some(asset_server.load_with_settings(
+                    "water/normal.png",
+                    |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                )),
+                metallic_roughness_texture: Some(
+                    asset_server.load_with_settings(
+                        "water/orm.png",
+                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    ),
                 ),
-                // metallic_roughness_texture: Some(
-                //     asset_server.load("greymarble_7-4K/greymarble_7_metallic-4K.png"),
-                // ),
-                normal_map_texture: Some(
-                    asset_server.load("greymarble_7-4K/greymarble_7_normal-4K.png"),
+                occlusion_texture: Some(
+                    asset_server.load_with_settings(
+                        "water/orm.png",
+                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    ),
                 ),
-
-                unlit: false,
+                depth_map: Some(asset_server.load_with_settings(
+                    "water/depth.png",
+                    |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                )),
+                flip_normal_map_y: true,
                 ..Default::default()
             },
             extension: TerrainMaterial {
