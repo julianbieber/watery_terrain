@@ -75,10 +75,10 @@ fn collect_displacements(
                 transform.translation.x,
                 transform.translation.z,
                 w.radius,
-                w.strength * depth,
+                w.strength * (depth + 0.2),
             ));
             // velocity.0 *= 0.8;
-            velocity.0.y = depth * 1.0;
+            velocity.0.y = depth * 0.8;
         }
     }
 }

@@ -72,7 +72,7 @@ fn update_flows(invocation_id: vec3<u32>) {
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
 
-    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 5.0;
+    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 10.0;
     let d = distance_from_displacement(p);
 
     // Horizontal edges (flow_x): (ex, y), ex in [0..W]
