@@ -21,20 +21,22 @@ fn get_height(vertex_position_world: vec2f) -> vec4f {
     let h: f32 = textureLoad(height_texture, uv, 0).r;
 
     let L = textureLoad(height_texture, uv + vec2i(-1,  0), 0).r;
-    let R = textureLoad(height_texture, uv + vec2i( 1,  0), 0).r;
-    let D = textureLoad(height_texture, uv + vec2i( 0, -1), 0).r;
-    let U = textureLoad(height_texture, uv + vec2i( 0,  1), 0).r;
+    let R = textureLoad(height_texture, uv + vec2i(1,  0), 0).r;
+    let D = textureLoad(height_texture, uv + vec2i( 0, 1), 0).r;
+    let U = textureLoad(height_texture, uv + vec2i( 0,  -1), 0).r;
 
     let n = vec3f(
-        (L - R)*100.0 ,
+        (L - R)*5.0 ,
         1.0,    
-        (D - U)*100.0 
+        (D - U)*5.0 
     );
 
     return vec4f(h* 10.0, normalize(n));
 }
 
-
+fn wrap(x: vec2f) -> vec2f {
+    return fract(x + ceil(abs(x)));
+}
 
 @vertex
 fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
@@ -42,7 +44,7 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     let model = mesh_functions::get_world_from_local(vertex.instance_index);
     out.world_position = model * vec4<f32>(vertex.position, 1.0);
     // let height = get_height(out.world_position.xz/1024.0);
-    let height = get_height(out.world_position.xz*5.0);
+    let height = get_height(out.world_position.xz*10.0);
     out.world_position.y = height.x;
 
     #ifdef MESHLET_MESH_MATERIAL_PASS
@@ -51,16 +53,16 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     #else ifdef PREPASS_PIPELINE
     #else
         out.world_normal = height.yzw;
-        if abs(dot(height.xzw, vec3(0,1,0))) < 0.999 {
-            out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0);
+        if abs(dot(height.xzw, vec3(0,1,0))) < 0.899 {
+            out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0)*0.11;
         } else {
-            out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0); // fallback for near-vertical normals
+            out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0)*0.11; // fallback for near-vertical normals
         }
     #endif
 
     out.position = position_world_to_clip(out.world_position.xyz);
 
-    out.uv = abs((out.world_position.xz/200.0) % 1.0);
+    out.uv = wrap(((out.world_position.xz+1024.0)/2048.0));
 
     return out;
 }
