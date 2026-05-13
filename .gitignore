@@ -3,3 +3,4 @@
 # This file contains environment-specific configuration like linker settings
 .cargo/config.toml
 docs/.zk/notebook.db
+assets/noise
