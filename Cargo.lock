@@ -1424,7 +1424,7 @@ dependencies = [
 [[package]]
 name = "bevy_sky_gradient"
 version = "0.2.0"
-source = "git+https://github.com/julianbieber/bevy_sky_gradient.git?rev=475a71404fd973338e0c04d92269c6dd79f7cc15#475a71404fd973338e0c04d92269c6dd79f7cc15"
+source = "git+https://github.com/julianbieber/bevy_sky_gradient.git?rev=7f8bfc95d204f900d65848a4e78bb91d7ae4aaec#7f8bfc95d204f900d65848a4e78bb91d7ae4aaec"
 dependencies = [
  "bevy",
  "bincode",
