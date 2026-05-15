@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 avian3d = "0.6.1"
 bevy = { version = "0.18", features  = ["experimental_bevy_feathers", "free_camera", "debug"]}
-bevy_sky_gradient = { git = "https://github.com/julianbieber/bevy_sky_gradient.git", rev ="475a71404fd973338e0c04d92269c6dd79f7cc15" }
+bevy_sky_gradient = { git = "https://github.com/julianbieber/bevy_sky_gradient.git", rev = "7f8bfc95d204f900d65848a4e78bb91d7ae4aaec" }
 # bevy_sky_gradient = { path = "../bevy_sky_gradient" }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 # Set max log levels. This helps avoid unwanted low-severity log spam, which can affect performance.
