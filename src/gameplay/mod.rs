@@ -12,7 +12,7 @@ use bevy::{
 use bevy_sky_gradient::plugin::SkyboxMagnetTag;
 
 use crate::{
-    heightmap::create_heightmap,
+    heightmap::{create_terrain_heightmap, create_water_heightmap},
     render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
     screens::Screen,
     water_sim::WaterDisplacement,
@@ -63,14 +63,14 @@ fn spawn_plane_dbg(
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    let terrain = TerrainHeightMapMesh {
+    let clipmap = TerrainHeightMapMesh {
         smallest_quad: 0.05,
         rings: 5,
         smallest_quad_count: 16 * 10,
     };
 
-    let heightmap = create_heightmap();
-    let mesh = terrain.create_base_mesh();
+    let heightmap = create_water_heightmap();
+    let mesh = clipmap.create_base_mesh();
     let heightmap_texture = images.add(heightmap.image());
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
@@ -111,10 +111,56 @@ fn spawn_plane_dbg(
             },
         })),
     ));
+    let rock_heightmap = create_terrain_heightmap();
+    let rock_mesh = clipmap.create_base_mesh();
+    let rock_heightmap_texture = images.add(rock_heightmap.image());
 
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::ZERO),
+        TerrainMarker,
+        rock_heightmap.avian(),
+        Mesh3d(meshes.add(rock_mesh)),
+        MeshMaterial3d(materials.add(ExtendedMaterial {
+            base: StandardMaterial {
+                base_color_texture: Some(asset_server.load("rock/base_color.png")),
+                emissive_texture: Some(asset_server.load("rock/emissive.png")),
+                normal_map_texture: Some(asset_server.load_with_settings(
+                    "rock/normal.png",
+                    |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                )),
+                metallic: 1.0,             // set, otherwise texture has no effect
+                perceptual_roughness: 1.0, // set, otherwise texture has no effect
+                metallic_roughness_texture: Some(
+                    asset_server.load_with_settings(
+                        "rock/orm.png",
+                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    ),
+                ),
+                occlusion_texture: Some(
+                    asset_server.load_with_settings(
+                        "rock/orm.png",
+                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    ),
+                ),
+                depth_map: Some(
+                    asset_server.load_with_settings(
+                        "rock/depth.png",
+                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    ),
+                ),
+                flip_normal_map_y: true,
+                ior: 1.33,
+                ..Default::default()
+            },
+            extension: TerrainMaterial {
+                height: rock_heightmap_texture.clone(),
+            },
+        })),
+    ));
+
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(Vec3::Y * 123.0),
         WaterDisplacement {
             radius: 5.0,
             strength: 9.0,
@@ -127,7 +173,7 @@ fn spawn_plane_dbg(
     ));
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::new(10.0, 0.0, 20.0)),
+        Transform::from_translation(Vec3::Y * 123.0),
         WaterDisplacement {
             radius: 1.0,
             strength: 3.0,
