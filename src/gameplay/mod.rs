@@ -13,9 +13,9 @@ use bevy_sky_gradient::plugin::SkyboxMagnetTag;
 
 use crate::{
     heightmap::{create_terrain_heightmap, create_water_heightmap},
-    render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh, TerrainMarker, TerrainMaterial},
+    render::clipmap::{ClipmapMarker, FollowTerrainMarker, TerrainHeightMapMesh, TerrainMaterial},
     screens::Screen,
-    water_sim::WaterDisplacement,
+    water_sim::{WaterDisplacement, WaterMarker, WaterSimPlugin},
 };
 
 pub struct GameplayPlugin;
@@ -75,8 +75,9 @@ fn spawn_plane_dbg(
     let heightmap_texture = images.add(heightmap.image());
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        TerrainMarker,
+        ClipmapMarker,
         Mesh3d(meshes.add(mesh)),
+        WaterMarker,
         MeshMaterial3d(materials.add(ExtendedMaterial {
             base: StandardMaterial {
                 base_color_texture: Some(asset_server.load("water/base_color.png")),
@@ -118,8 +119,9 @@ fn spawn_plane_dbg(
 
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        TerrainMarker,
+        ClipmapMarker,
         rock_heightmap.avian(),
+        RigidBody::Static,
         Mesh3d(meshes.add(rock_mesh)),
         MeshMaterial3d(materials.add(ExtendedMaterial {
             base: StandardMaterial {
@@ -161,7 +163,7 @@ fn spawn_plane_dbg(
 
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::Y * 123.0),
+        Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * 19.0),
         WaterDisplacement {
             radius: 5.0,
             strength: 9.0,
@@ -174,7 +176,7 @@ fn spawn_plane_dbg(
     ));
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::Y * 123.0),
+        Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * -19.0),
         WaterDisplacement {
             radius: 1.0,
             strength: 3.0,
@@ -193,8 +195,8 @@ fn move_boat(
     // cam: Single<&Transform, (With<Camera>, Without<WaterDisplacement>)>,
 ) {
     for mut b in &mut boat {
-        b.0.z = time.elapsed_secs().sin() * 3.04;
-        b.0.x =
-            (time.elapsed_secs().cos() + ((time.elapsed_secs() * 0.3).sin().fract() * 2.0)) * 3.04;
+        // b.0.z = time.elapsed_secs().sin() * 3.04;
+        // b.0.x =
+        //     (time.elapsed_secs().cos() + ((time.elapsed_secs() * 0.3).sin().fract() * 2.0)) * 3.04;
     }
 }

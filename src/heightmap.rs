@@ -29,8 +29,8 @@ pub fn create_terrain_heightmap() -> Heightmap {
     for y in 0..Heightmap::DIM {
         for x in 0..Heightmap::DIM {
             let v = Vec2::new(x as f32 * 0.03, y as f32 * 0.03);
-            let scope = mountain_noise(Vec3::new(v.y * 0.1, v.x * 0.1, 100.0));
-            let h: f32 = (mountain_noise(Vec3::new(v.x, v.y, 1.0)) * scope).abs() + 0.01;
+            let scope = mountain_noise(Vec3::new(v.y * 0.01, v.x * 0.01, 200.0));
+            let h: f32 = (mountain_noise(Vec3::new(v.x, v.y, 1.0)) * scope).abs() * 1.0 + 0.01;
             m.set(x, y, h.abs());
         }
     }
@@ -109,7 +109,7 @@ impl Heightmap {
             }
             h.push(row);
         }
-        Collider::heightfield(h, Vec3::new(0.1, 1.0, 0.1))
+        Collider::heightfield(h, Vec3::new(1.0, 1.0, 1.0))
     }
 }
 
