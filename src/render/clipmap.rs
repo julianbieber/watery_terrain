@@ -14,11 +14,11 @@ mod tests;
 pub struct FollowTerrainMarker;
 
 #[derive(Component)]
-pub struct TerrainMarker;
+pub struct ClipmapMarker;
 
 pub fn follow(
-    following: Single<&Transform, (With<FollowTerrainMarker>, Without<TerrainMarker>)>,
-    mut terrain: Query<&mut Transform, With<TerrainMarker>>,
+    following: Single<&Transform, (With<FollowTerrainMarker>, Without<ClipmapMarker>)>,
+    mut terrain: Query<&mut Transform, With<ClipmapMarker>>,
 ) {
     for mut t in &mut terrain {
         t.translation.x = following.translation.x.floor();

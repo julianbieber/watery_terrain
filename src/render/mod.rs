@@ -5,7 +5,7 @@ use bevy::{asset::embedded_asset, pbr::ExtendedMaterial, prelude::*};
 use crate::{
     render::clipmap::{TerrainMaterial, follow},
     screens::Screen,
-    water_sim::WaterHeightTexture,
+    water_sim::{WaterHeightTexture, WaterMarker},
 };
 
 pub struct TerrainRanderPlugin;
@@ -25,7 +25,10 @@ impl Plugin for TerrainRanderPlugin {
 
 fn swap_textures(
     textures: ResMut<WaterHeightTexture>,
-    water: Single<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    water: Single<
+        &MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>,
+        With<WaterMarker>,
+    >,
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
 ) {
     let a = materials.get_mut(water.0.id()).unwrap();

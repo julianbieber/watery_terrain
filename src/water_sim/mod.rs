@@ -26,6 +26,9 @@ use crate::{render::clipmap::TerrainMaterial, screens::Screen};
 
 pub struct WaterSimPlugin;
 
+#[derive(Component)]
+pub struct WaterMarker;
+
 impl Plugin for WaterSimPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "water.wgsl");
@@ -78,7 +81,7 @@ fn collect_displacements(
                 w.strength * (depth + 0.2),
             ));
             // velocity.0 *= 0.8;
-            velocity.0.y = depth * 0.8;
+            // velocity.0.y = depth * 0.8;
         }
     }
 }
@@ -156,12 +159,20 @@ struct SimParams {
 }
 
 fn init_internal_textures(
-    _: On<Add, MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    trigger: On<
+        Add,
+        (
+            // MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>,
+            WaterMarker,
+        ),
+    >,
     mut commands: Commands,
-    material: Single<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     materials: Res<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
 ) {
+    info!("adding internal water tex");
+    let material = material.get(trigger.entity).unwrap();
     let material = materials.get(material.0.id()).unwrap();
     let water_height = images.get(material.extension.height.id()).unwrap();
     let water_height_2 = water_height.clone();
