@@ -1,6 +1,6 @@
 use avian3d::{
     PhysicsPlugins,
-    prelude::{Collider, Gravity, GravityScale, LinearVelocity, RigidBody},
+    prelude::{Collider, Gravity, GravityScale, LinearVelocity, PhysicsDebugPlugin, RigidBody},
 };
 use bevy::{
     camera::Exposure,
@@ -15,7 +15,7 @@ use crate::{
     heightmap::{create_terrain_heightmap, create_water_heightmap},
     render::clipmap::{ClipmapMarker, FollowTerrainMarker, TerrainHeightMapMesh, TerrainMaterial},
     screens::Screen,
-    water_sim::{WaterDisplacement, WaterMarker, WaterSimPlugin},
+    water_sim::{WaterDisplacement, WaterMarker},
 };
 
 pub struct GameplayPlugin;
@@ -23,6 +23,7 @@ pub struct GameplayPlugin;
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PhysicsPlugins::default());
+        // app.add_plugins(PhysicsDebugPlugin {});
         app.insert_resource(Gravity::default());
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
@@ -75,6 +76,7 @@ fn spawn_plane_dbg(
     let heightmap_texture = images.add(heightmap.image());
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(Vec3::Y * -10.0),
         ClipmapMarker,
         Mesh3d(meshes.add(mesh)),
         WaterMarker,
@@ -176,12 +178,12 @@ fn spawn_plane_dbg(
     ));
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * -19.0),
+        Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * -39.0),
         WaterDisplacement {
             radius: 1.0,
             strength: 3.0,
         },
-        Collider::sphere(15.0),
+        Collider::sphere(1.0),
         RigidBody::Dynamic,
         GravityScale(1.0),
         Mesh3d(meshes.add(Sphere::new(1.0))),
@@ -195,8 +197,8 @@ fn move_boat(
     // cam: Single<&Transform, (With<Camera>, Without<WaterDisplacement>)>,
 ) {
     for mut b in &mut boat {
-        // b.0.z = time.elapsed_secs().sin() * 3.04;
-        // b.0.x =
-        //     (time.elapsed_secs().cos() + ((time.elapsed_secs() * 0.3).sin().fract() * 2.0)) * 3.04;
+        b.0.z = time.elapsed_secs().sin() * 3.04;
+        b.0.x =
+            (time.elapsed_secs().cos() + ((time.elapsed_secs() * 0.3).sin().fract() * 2.0)) * 3.04;
     }
 }
