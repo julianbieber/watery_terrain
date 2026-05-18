@@ -24,5 +24,6 @@ The flow application sets water to terrain + flow amount, if terrain > water.
 ## Physics
 
 Using avian with the heightmap should be straight forward.
-
+Issue to consider, the heightmap is centered around 0,0.
+There seems to be some issue with the collisions. For now I think they might be related to colliding with the edge of the heightfield.
 
