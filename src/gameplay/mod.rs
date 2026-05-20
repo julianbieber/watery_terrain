@@ -67,6 +67,7 @@ fn spawn_plane_dbg(
         smallest_quad: 0.05,
         rings: 5,
         smallest_quad_count: 16 * 10,
+        density_factor: 1.0,
     };
 
     let heightmap = create_heightmap();
