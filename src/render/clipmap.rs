@@ -28,14 +28,15 @@ pub struct TerrainHeightMapMesh {
     pub smallest_quad: f32,
     pub rings: u8,
     pub smallest_quad_count: u8,
+    pub density_factor: f32,
 }
 
-struct QuadMeshBuilder {
-    vertices: Vec<Vec3>,
-    indices: Vec<u32>,
+pub struct QuadMeshBuilder {
+    pub vertices: Vec<Vec3>,
+    pub indices: Vec<u32>,
 }
 
-enum DirectionForTiple {
+pub enum DirectionForTiple {
     Up,
     Down,
     Left,
@@ -43,14 +44,14 @@ enum DirectionForTiple {
 }
 
 impl QuadMeshBuilder {
-    fn empty() -> QuadMeshBuilder {
+    pub fn empty() -> QuadMeshBuilder {
         QuadMeshBuilder {
             vertices: Vec::new(),
             indices: Vec::new(),
         }
     }
 
-    fn add_quad(&mut self, bottom_left: Vec3, width: f32) {
+    pub fn add_quad(&mut self, bottom_left: Vec3, width: f32) {
         let o = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&[
             bottom_left,
@@ -64,7 +65,7 @@ impl QuadMeshBuilder {
             .extend_from_slice(&[o, o + 2, o + 1, o + 2, o + 3, o + 1]);
     }
 
-    fn add_triple_divided_quad(
+    pub fn add_triple_divided_quad(
         &mut self,
         bottom_left: Vec3,
         width: f32,
@@ -170,7 +171,7 @@ impl QuadMeshBuilder {
         }
     }
 
-    fn add_subdivided_quad(
+    pub fn add_subdivided_quad(
         &mut self,
         bottom_left: Vec3,
         quad_width: f32,
@@ -275,7 +276,7 @@ impl QuadMeshBuilder {
         }
     }
 
-    fn build(&self) -> Mesh {
+    pub fn build(&self) -> Mesh {
         let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.vertices.clone());
         let uvs = vec![Vec2::ZERO; self.vertices.len()];
@@ -304,13 +305,19 @@ impl TerrainHeightMapMesh {
             None,
         );
         let mut quad_size = self.smallest_quad;
+        let base_divisions = self.smallest_quad_count / 4;
 
         for _ in 0..self.rings {
             quad_size *= 2.0;
+            // Compute actual divisions for this ring using density factor
+            // Ensure at least 1 division to avoid degenerate meshes
+            let divisions = (base_divisions as f32 * self.density_factor) as u8;
+            let divisions = std::cmp::max(divisions, 1);
+            
             bottom_left -= Vec3::new(
-                quad_size * (self.smallest_quad_count / 4) as f32,
+                quad_size * base_divisions as f32,
                 0.0,
-                quad_size * (self.smallest_quad_count / 4) as f32,
+                quad_size * base_divisions as f32,
             );
             for (x, y, dir) in [
                 (0.0, 0.0, None),
@@ -329,12 +336,12 @@ impl TerrainHeightMapMesh {
                 m.add_subdivided_quad(
                     bottom_left
                         + Vec3::new(
-                            quad_size * x * (self.smallest_quad_count / 4) as f32,
+                            quad_size * x * base_divisions as f32,
                             0.0,
-                            quad_size * y * (self.smallest_quad_count / 4) as f32,
+                            quad_size * y * base_divisions as f32,
                         ),
                     quad_size,
-                    self.smallest_quad_count / 4,
+                    divisions,
                     dir,
                 );
             }
