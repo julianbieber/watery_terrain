@@ -7,6 +7,9 @@ use bevy::{
     shader::ShaderRef,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Component)]
 pub struct FollowTerrainMarker;
 
@@ -31,12 +34,12 @@ pub struct TerrainHeightMapMesh {
     pub density_factor: f32,
 }
 
-pub struct QuadMeshBuilder {
-    pub vertices: Vec<Vec3>,
-    pub indices: Vec<u32>,
+struct QuadMeshBuilder {
+    vertices: Vec<Vec3>,
+    indices: Vec<u32>,
 }
 
-pub enum DirectionForTiple {
+enum DirectionForTiple {
     Up,
     Down,
     Left,
@@ -44,14 +47,14 @@ pub enum DirectionForTiple {
 }
 
 impl QuadMeshBuilder {
-    pub fn empty() -> QuadMeshBuilder {
+    fn empty() -> QuadMeshBuilder {
         QuadMeshBuilder {
             vertices: Vec::new(),
             indices: Vec::new(),
         }
     }
 
-    pub fn add_quad(&mut self, bottom_left: Vec3, width: f32) {
+    fn add_quad(&mut self, bottom_left: Vec3, width: f32) {
         let o = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&[
             bottom_left,
@@ -65,7 +68,7 @@ impl QuadMeshBuilder {
             .extend_from_slice(&[o, o + 2, o + 1, o + 2, o + 3, o + 1]);
     }
 
-    pub fn add_triple_divided_quad(
+    fn add_triple_divided_quad(
         &mut self,
         bottom_left: Vec3,
         width: f32,
@@ -171,7 +174,7 @@ impl QuadMeshBuilder {
         }
     }
 
-    pub fn add_subdivided_quad(
+    fn add_subdivided_quad(
         &mut self,
         bottom_left: Vec3,
         quad_width: f32,
@@ -276,7 +279,7 @@ impl QuadMeshBuilder {
         }
     }
 
-    pub fn build(&self) -> Mesh {
+    fn build(&self) -> Mesh {
         let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.vertices.clone());
         let uvs = vec![Vec2::ZERO; self.vertices.len()];
