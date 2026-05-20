@@ -1,6 +1,4 @@
 pub mod clipmap;
-#[cfg(test)]
-pub mod clipmap_tests;
 
 use bevy::{asset::embedded_asset, pbr::ExtendedMaterial, prelude::*};
 

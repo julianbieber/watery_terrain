@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 
-use super::clipmap::{DirectionForTiple, QuadMeshBuilder, TerrainHeightMapMesh};
+use super::{DirectionForTiple, QuadMeshBuilder, TerrainHeightMapMesh};
 
 // ============================================================================
 // Test Helpers
