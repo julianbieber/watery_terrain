@@ -23,7 +23,7 @@ pub struct GameplayPlugin;
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PhysicsPlugins::default());
-        // app.add_plugins(PhysicsDebugPlugin {});
+        app.add_plugins(PhysicsDebugPlugin {});
         app.insert_resource(Gravity::default());
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
@@ -66,9 +66,8 @@ fn spawn_plane_dbg(
 ) {
     let clipmap = TerrainHeightMapMesh {
         smallest_quad: 0.05,
-        rings: 5,
+        rings: 4,
         smallest_quad_count: 16 * 10,
-        density_factor: 1.0,
     };
 
     let heightmap = create_water_heightmap();
@@ -76,7 +75,6 @@ fn spawn_plane_dbg(
     let heightmap_texture = images.add(heightmap.image());
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::Y * -10.0),
         ClipmapMarker,
         Mesh3d(meshes.add(mesh)),
         WaterMarker,

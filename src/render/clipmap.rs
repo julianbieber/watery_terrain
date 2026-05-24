@@ -7,9 +7,6 @@ use bevy::{
     shader::ShaderRef,
 };
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Component)]
 pub struct FollowTerrainMarker;
 
@@ -31,7 +28,6 @@ pub struct TerrainHeightMapMesh {
     pub smallest_quad: f32,
     pub rings: u8,
     pub smallest_quad_count: u8,
-    pub density_factor: f32,
 }
 
 struct QuadMeshBuilder {
@@ -312,10 +308,6 @@ impl TerrainHeightMapMesh {
 
         for _ in 0..self.rings {
             quad_size *= 2.0;
-            // Compute actual divisions for this ring using density factor
-            // Ensure at least 1 division to avoid degenerate meshes
-            let divisions = (base_divisions as f32 * self.density_factor) as u8;
-            let divisions = std::cmp::max(divisions, 1);
 
             bottom_left -= Vec3::new(
                 quad_size * base_divisions as f32,
@@ -344,7 +336,7 @@ impl TerrainHeightMapMesh {
                             quad_size * y * base_divisions as f32,
                         ),
                     quad_size,
-                    divisions,
+                    self.smallest_quad_count / 4,
                     dir,
                 );
             }

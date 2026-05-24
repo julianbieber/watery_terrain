@@ -81,7 +81,7 @@ fn collect_displacements(
                 w.strength * (depth + 0.2),
             ));
             // velocity.0 *= 0.8;
-            velocity.0.y = depth * 0.8;
+            // velocity.0.y = depth * 0.8;
         }
     }
 }
