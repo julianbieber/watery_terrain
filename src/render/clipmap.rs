@@ -316,7 +316,7 @@ impl TerrainHeightMapMesh {
             // Ensure at least 1 division to avoid degenerate meshes
             let divisions = (base_divisions as f32 * self.density_factor) as u8;
             let divisions = std::cmp::max(divisions, 1);
-            
+
             bottom_left -= Vec3::new(
                 quad_size * base_divisions as f32,
                 0.0,
