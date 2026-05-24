@@ -23,7 +23,7 @@ pub struct GameplayPlugin;
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PhysicsPlugins::default());
-        app.add_plugins(PhysicsDebugPlugin {});
+        // app.add_plugins(PhysicsDebugPlugin {});
         app.insert_resource(Gravity::default());
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
@@ -36,7 +36,8 @@ fn spawn_player_camera(mut commands: Commands) {
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         Camera3d::default(),
-        Transform::from_translation(Vec3::new(0.0, 20.0, -1.0)).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(Vec3::new(0.0, 1.0, 1.0))
+            .looking_at(Vec3::ZERO + Vec3::Y, Vec3::Y),
         FollowTerrainMarker,
         FreeCamera::default(),
         Exposure::from_physical_camera(bevy::camera::PhysicalCameraParameters {
@@ -66,7 +67,7 @@ fn spawn_plane_dbg(
 ) {
     let clipmap = TerrainHeightMapMesh {
         smallest_quad: 0.05,
-        rings: 4,
+        rings: 5,
         smallest_quad_count: 16 * 10,
     };
 
@@ -120,8 +121,6 @@ fn spawn_plane_dbg(
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
-        rock_heightmap.avian(),
-        RigidBody::Static,
         Mesh3d(meshes.add(rock_mesh)),
         MeshMaterial3d(materials.add(ExtendedMaterial {
             base: StandardMaterial {
@@ -160,15 +159,21 @@ fn spawn_plane_dbg(
             },
         })),
     ));
+    // seperate entity so the collider does not follow the camera
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        rock_heightmap.avian(),
+        RigidBody::Static,
+    ));
 
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * 19.0),
         WaterDisplacement {
-            radius: 5.0,
-            strength: 9.0,
+            radius: 3.0,
+            strength: 90.0,
         },
-        Collider::sphere(5.0),
+        Collider::sphere(3.0),
         RigidBody::Dynamic,
         GravityScale(1.0),
         Mesh3d(meshes.add(Sphere::new(5.0))),
@@ -179,7 +184,7 @@ fn spawn_plane_dbg(
         Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * -39.0),
         WaterDisplacement {
             radius: 1.0,
-            strength: 3.0,
+            strength: 30.0,
         },
         Collider::sphere(1.0),
         RigidBody::Dynamic,

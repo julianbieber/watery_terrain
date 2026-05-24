@@ -18,8 +18,8 @@ pub fn follow(
     mut terrain: Query<&mut Transform, With<ClipmapMarker>>,
 ) {
     for mut t in &mut terrain {
-        t.translation.x = following.translation.x.floor();
-        t.translation.z = following.translation.z.floor();
+        t.translation.x = (following.translation.x / 10.0).floor() * 10.0;
+        t.translation.z = (following.translation.z / 10.0).floor() * 10.0;
     }
 }
 

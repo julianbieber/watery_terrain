@@ -71,9 +71,9 @@ fn collect_displacements(
     buffer.buffer.clear();
     for (mut velocity, transform, w) in &mut d {
         let h = height_from_texture(water, transform.translation.xz());
-        if transform.translation.y < h {
+        if (transform.translation.y - w.radius) < h {
             let t_h = transform.translation.y;
-            let depth = h - (t_h);
+            let depth = h - t_h;
             buffer.buffer.push(Vec4::new(
                 transform.translation.x,
                 transform.translation.z,
@@ -81,7 +81,7 @@ fn collect_displacements(
                 w.strength * (depth + 0.2),
             ));
             // velocity.0 *= 0.8;
-            // velocity.0.y = depth * 0.8;
+            velocity.0.y = depth * 0.8;
         }
     }
 }
@@ -329,7 +329,7 @@ pub fn height_from_texture(t: &Image, world: Vec2) -> f32 {
     let x = uv.x as u32;
     let y = uv.y as u32;
 
-    t.get_color_at(x, y).unwrap().to_linear().red * 10.0
+    t.get_color_at(x, y).unwrap().to_linear().red
 }
 
 #[derive(Resource, Clone, ExtractResource)]

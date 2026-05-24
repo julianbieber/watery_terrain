@@ -22,7 +22,7 @@ The water system implements a 2D shallow water simulation using a staggered MAC 
 **World <-> Texture coordinate mapping:**
 ```
 texture_coord = (world_coord * 10.0 + 1024.0).floor()
-world_height = texture_value * 10.0
+world_height = texture_value
 ```
 
 The offset of 1024 centers the grid at world origin. A texture value of 1.0 represents 10m of water height in world space.
@@ -147,7 +147,7 @@ For each vertex:
    );
    normal = normalize(n).yzw
    ```
-4. Sets vertex position y-coordinate to `height * 10.0`
+4. Sets vertex position y-coordinate to `height`
 5. Computes tangent for normal mapping
 6. Sets UV for tiling texture: `abs((world_position.xz/200.0) % 1.0)`
 
