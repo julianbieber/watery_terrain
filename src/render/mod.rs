@@ -3,7 +3,7 @@ pub mod clipmap;
 use bevy::{asset::embedded_asset, pbr::ExtendedMaterial, prelude::*};
 
 use crate::{
-    render::clipmap::{TerrainMaterial, follow},
+    render::clipmap::{TerrainMaterial, WaterTerrainMaterial, follow},
     screens::Screen,
     water_sim::{WaterHeightTexture, WaterMarker},
 };
@@ -13,7 +13,11 @@ pub struct TerrainRanderPlugin;
 impl Plugin for TerrainRanderPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "terrain.wgsl");
+        embedded_asset!(app, "water.wgsl");
 
+        app.add_plugins(MaterialPlugin::<
+            ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>,
+        >::default());
         app.add_plugins(MaterialPlugin::<
             ExtendedMaterial<StandardMaterial, TerrainMaterial>,
         >::default());
@@ -26,15 +30,15 @@ impl Plugin for TerrainRanderPlugin {
 fn swap_textures(
     textures: ResMut<WaterHeightTexture>,
     water: Single<
-        &MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>,
+        &MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>,
         With<WaterMarker>,
     >,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
 ) {
     let a = materials.get_mut(water.0.id()).unwrap();
-    if a.extension.height == textures.texture_a {
-        a.extension.height = textures.texture_b.clone();
+    if a.extension.water == textures.texture_a {
+        a.extension.water = textures.texture_b.clone();
     } else {
-        a.extension.height = textures.texture_a.clone();
+        a.extension.water = textures.texture_a.clone();
     }
 }

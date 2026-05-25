@@ -13,7 +13,10 @@ use bevy_sky_gradient::plugin::SkyboxMagnetTag;
 
 use crate::{
     heightmap::{create_terrain_heightmap, create_water_heightmap},
-    render::clipmap::{ClipmapMarker, FollowTerrainMarker, TerrainHeightMapMesh, TerrainMaterial},
+    render::clipmap::{
+        ClipmapMarker, FollowTerrainMarker, TerrainHeightMapMesh, TerrainMaterial,
+        WaterTerrainMaterial,
+    },
     screens::Screen,
     water_sim::{WaterDisplacement, WaterMarker},
 };
@@ -60,7 +63,8 @@ fn spawn_player_camera(mut commands: Commands) {
 fn spawn_plane_dbg(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
+    mut rock_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
@@ -74,6 +78,10 @@ fn spawn_plane_dbg(
     let heightmap = create_water_heightmap();
     let mesh = clipmap.create_base_mesh();
     let heightmap_texture = images.add(heightmap.image());
+
+    let rock_heightmap = create_terrain_heightmap();
+    let rock_mesh = clipmap.create_base_mesh();
+    let rock_heightmap_texture = images.add(rock_heightmap.image());
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
@@ -109,20 +117,18 @@ fn spawn_plane_dbg(
                 ior: 1.33,
                 ..Default::default()
             },
-            extension: TerrainMaterial {
-                height: heightmap_texture.clone(),
+            extension: WaterTerrainMaterial {
+                water: heightmap_texture.clone(),
+                base: rock_heightmap_texture.clone(),
             },
         })),
     ));
-    let rock_heightmap = create_terrain_heightmap();
-    let rock_mesh = clipmap.create_base_mesh();
-    let rock_heightmap_texture = images.add(rock_heightmap.image());
 
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
         Mesh3d(meshes.add(rock_mesh)),
-        MeshMaterial3d(materials.add(ExtendedMaterial {
+        MeshMaterial3d(rock_materials.add(ExtendedMaterial {
             base: StandardMaterial {
                 base_color_texture: Some(asset_server.load("rock/base_color.png")),
                 emissive_texture: Some(asset_server.load("rock/emissive.png")),
