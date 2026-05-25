@@ -348,6 +348,55 @@ impl TerrainHeightMapMesh {
 }
 
 #[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
+pub struct WaterTerrainMaterial {
+    #[texture(100)]
+    #[sampler(101)]
+    pub water: Handle<Image>,
+    #[texture(102)]
+    #[sampler(103)]
+    pub base: Handle<Image>,
+}
+
+impl MaterialExtension for WaterTerrainMaterial {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("water.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn enable_prepass() -> bool {
+        true
+    }
+
+    fn enable_shadows() -> bool {
+        true
+    }
+
+    fn prepass_vertex_shader() -> bevy::shader::ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("water.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn deferred_vertex_shader() -> bevy::shader::ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("water.wgsl")).with_source("embedded"),
+        )
+    }
+
+    // fn specialize(
+    //     _: &bevy::pbr::MaterialExtensionPipeline,
+    //     descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+    //     _: &bevy::mesh::MeshVertexBufferLayoutRef,
+    //     _key: bevy::pbr::MaterialExtensionKey<Self>,
+    // ) -> std::result::Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+    //     descriptor.primitive.polygon_mode = bevy::render::render_resource::PolygonMode::Line;
+    //     descriptor.depth_stencil.as_mut().unwrap().bias.slope_scale = 1.0;
+    //     Ok(())
+    // }
+}
+
+#[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
 pub struct TerrainMaterial {
     #[texture(100)]
     #[sampler(101)]

@@ -22,7 +22,7 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 
-use crate::{render::clipmap::TerrainMaterial, screens::Screen};
+use crate::{render::clipmap::WaterTerrainMaterial, screens::Screen};
 
 pub struct WaterSimPlugin;
 
@@ -167,14 +167,14 @@ fn init_internal_textures(
         ),
     >,
     mut commands: Commands,
-    material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
-    materials: Res<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
+    materials: Res<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     info!("adding internal water tex");
     let material = material.get(trigger.entity).unwrap();
     let material = materials.get(material.0.id()).unwrap();
-    let water_height = images.get(material.extension.height.id()).unwrap();
+    let water_height = images.get(material.extension.water.id()).unwrap();
     let water_height_2 = water_height.clone();
     let mut flow_x = Image::new(
         Extent3d {
@@ -209,7 +209,7 @@ fn init_internal_textures(
     let water_height_2 = images.add(water_height_2);
 
     commands.insert_resource(WaterHeightTexture {
-        texture_a: material.extension.height.clone(),
+        texture_a: material.extension.water.clone(),
         texture_b: water_height_2,
         flow_x,
         flow_y,
