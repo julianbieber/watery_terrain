@@ -38,6 +38,9 @@ fn get_height(vertex_position_world: vec2f) -> vec4f {
         1.0,
         ((D+base_D) - (U+base_U)) * 1.0
     );
+    if h == 0.0{
+        return vec4f(base_h - 0.1, normalize(n));
+    } 
 
     return vec4f(h+base_h, normalize(n));
 }

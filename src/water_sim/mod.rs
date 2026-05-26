@@ -68,12 +68,14 @@ fn collect_displacements(
     textures: Res<Assets<Image>>,
 ) {
     let water = textures.get(water_height.texture_a.id()).unwrap();
+    let base = textures.get(water_height.base_height.id()).unwrap();
     buffer.buffer.clear();
     for (mut velocity, transform, w) in &mut d {
         let h = height_from_texture(water, transform.translation.xz());
-        if (transform.translation.y - w.radius) < h {
+        let base_h = height_from_texture(base, transform.translation.xz());
+        if (transform.translation.y - w.radius) < (h + base_h) && h > 0.0 {
             let t_h = transform.translation.y;
-            let depth = h - t_h;
+            let depth = (h + base_h) - t_h;
             buffer.buffer.push(Vec4::new(
                 transform.translation.x,
                 transform.translation.z,
@@ -168,12 +170,12 @@ fn init_internal_textures(
     >,
     mut commands: Commands,
     material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
-    materials: Res<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
+    water_terrain_materials: Res<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     info!("adding internal water tex");
     let material = material.get(trigger.entity).unwrap();
-    let material = materials.get(material.0.id()).unwrap();
+    let material = water_terrain_materials.get(material.0.id()).unwrap();
     let water_height = images.get(material.extension.water.id()).unwrap();
     let water_height_2 = water_height.clone();
     let mut flow_x = Image::new(
@@ -213,6 +215,7 @@ fn init_internal_textures(
         texture_b: water_height_2,
         flow_x,
         flow_y,
+        base_height: material.extension.base.clone(),
     });
 }
 
@@ -243,6 +246,10 @@ fn init_water_render(
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 storage_buffer_read_only::<Vec<Vec4>>(false),
+                texture_storage_2d(
+                    bevy::render::render_resource::TextureFormat::R32Float,
+                    bevy::render::render_resource::StorageTextureAccess::ReadOnly,
+                ),
             ),
         ),
     );
@@ -284,6 +291,7 @@ fn prepare_water_bindgroups(
     let tex_b = gpu_images.get(&water_images.texture_b).unwrap();
     let flow_x = gpu_images.get(&water_images.flow_x).unwrap();
     let flow_y = gpu_images.get(&water_images.flow_y).unwrap();
+    let base = gpu_images.get(&water_images.base_height).unwrap();
 
     let bind_group_0 = render_device.create_bind_group(
         None,
@@ -294,6 +302,7 @@ fn prepare_water_bindgroups(
             &flow_x.texture_view,
             &flow_y.texture_view,
             displacement.buffer.binding().unwrap(),
+            &base.texture_view,
         )),
     );
     let bind_group_1 = render_device.create_bind_group(
@@ -305,6 +314,7 @@ fn prepare_water_bindgroups(
             &flow_x.texture_view,
             &flow_y.texture_view,
             displacement.buffer.binding().unwrap(),
+            &base.texture_view,
         )),
     );
     commands.insert_resource(WaterBindGroups([bind_group_0, bind_group_1]));
@@ -316,6 +326,7 @@ pub struct WaterHeightTexture {
     pub texture_b: Handle<Image>,
     pub flow_x: Handle<Image>,
     pub flow_y: Handle<Image>,
+    pub base_height: Handle<Image>,
 }
 
 pub fn height_from_texture(t: &Image, world: Vec2) -> f32 {

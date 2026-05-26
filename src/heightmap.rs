@@ -17,7 +17,7 @@ pub fn create_water_heightmap() -> Heightmap {
             let v = Vec2::new(x as f32 * 0.03, y as f32 * 0.03);
             let scope = mountain_noise(Vec3::new(v.y * 0.1, v.x * 0.1, 100.0));
             let h: f32 = mountain_noise(Vec3::new(v.x, v.y, 1.0)) * scope;
-            m.set(x, y, h.abs() + 1.0);
+            m.set(x, y, h.abs());
         }
     }
     m
@@ -29,10 +29,11 @@ pub fn create_terrain_heightmap() -> Heightmap {
     for y in 0..Heightmap::DIM {
         for x in 0..Heightmap::DIM {
             let v = Vec2::new(x as f32 * 0.03, y as f32 * 0.03);
-            let scope = mountain_noise(Vec3::new(v.y * 0.000001, v.x * 0.000001, 200.0));
-            let h: f32 =
-                (mountain_noise(Vec3::new(v.x, v.y, 1.0) * 0.1) * scope).abs() * 5.0 + 0.01;
-            m.set(x, y, h.abs());
+            let h: f32 = (mountain_noise(Vec3::new(v.x, v.y, 1.0) * 0.1)).abs() * 5.0
+                + 0.01
+                + value_noise(Vec2::new(v.x, v.y) * 0.1) * 1.2
+                + voronoise(Vec2::new(v.x, v.y) * 0.1, 0.2, 0.2) * 1.0;
+            m.set(x, y, h.abs() * 3.0);
         }
     }
     m
@@ -102,9 +103,9 @@ impl Heightmap {
 
     pub fn avian(&self) -> Collider {
         let mut h = Vec::with_capacity(Self::DIM as usize);
-        for z in (0..Self::DIM) {
+        for z in 0..Self::DIM {
             let mut row = Vec::with_capacity(Self::DIM as usize);
-            for x in (0..Self::DIM) {
+            for x in 0..Self::DIM {
                 let height = self.get(x, z);
                 row.push(height);
             }
