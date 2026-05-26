@@ -6,6 +6,9 @@
 
 @group(0) @binding(4) var<storage, read> displacements: array<vec4f>;
 
+@group(0) @binding(5) var base_height_texture: texture_storage_2d<r32float, read>;
+
+
 struct SimParams {
     id: i32,
     _pad: vec3f,
@@ -14,8 +17,9 @@ var<push_constant> sim: SimParams;
 
 // -------- helpers --------
 
-fn get_height(location: vec2i) -> f32 {
-    return textureLoad(input, location).x;
+// returns base and water height separately
+fn get_height(location: vec2i) -> vec2f {
+    return vec2f(textureLoad(base_height_texture, location).x,textureLoad(input, location).x);
 }
 
 fn set_height(location: vec2i, v: f32) {
@@ -89,9 +93,14 @@ fn update_flows(invocation_id: vec3<u32>) {
             let hL = get_height(left_cell);
             var hR = get_height(right_cell);
             var f = get_flow_x(vec2i(ex, ey));
-            let dh = hL - hR;
+            var dh = (hL.x + hL.y) - (hR.x+hR.y);
+            if dh < 0.0 {
+                dh = -min(abs(dh), hR.y);
+            } else if dh > 0.0 {
+                dh = min(dh, hL.y);
+            }
             // simple acceleration + damping
-            f = f *0.99 + dh * 0.1125;
+            f = f *0.99 + dh * 0.4125;
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
                 if p.x != displacement_circle.x || p.y != displacement_circle.y {
@@ -118,8 +127,13 @@ fn update_flows(invocation_id: vec3<u32>) {
             var hU = get_height(up_cell);
 
             var f = get_flow_y(vec2i(ex, ey));
-            let dh = hD - hU;
-            f = f *0.99 + dh * 0.1125;
+            var dh = (hD.x + hD.y) - (hU.x+hU.y);
+            if dh < 0.0 {
+                dh = -min(abs(dh), hU.y);
+            } else if dh > 0.0 {
+                dh = min(dh, hD.y);
+            }
+            f = f *0.99 + dh * 0.4125;
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
                 if p.x != displacement_circle.x || p.y != displacement_circle.y {
@@ -142,7 +156,7 @@ fn update_water_height(invocation_id: vec3<u32>) {
         return;
     }
 
-    let own = get_height(l);
+    let own = get_height(l).y;
 
     // edges around cell (x,y):
     // flow_x(ex,y): between (ex-1,y) -> (ex,y), + is left->right
@@ -156,7 +170,8 @@ fn update_water_height(invocation_id: vec3<u32>) {
     // net inflow (positive = gain)
     let net = (fx_left - fx_right) + (fy_down - fy_up);
 
-    let new_height = own + net;
+    var new_height = max(0.0, own + net);
+
     set_height(l, new_height);
 }
 

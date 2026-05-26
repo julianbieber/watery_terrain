@@ -42,7 +42,7 @@ fn main() -> AppExit {
         .set_cycle(SkyCyclePlugin {
             sky_time_settings: SkyTimeSettings {
                 day_time_sec: 30.0,
-                night_time_sec: 45.0,
+                night_time_sec: 4.0,
                 sunrise_time_sec: 7.0,
                 sunset_time_sec: 9.0,
             },

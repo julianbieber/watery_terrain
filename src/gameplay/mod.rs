@@ -1,6 +1,6 @@
 use avian3d::{
     PhysicsPlugins,
-    prelude::{Collider, Gravity, GravityScale, LinearVelocity, PhysicsDebugPlugin, RigidBody},
+    prelude::{Collider, Gravity, GravityScale, LinearVelocity, RigidBody},
 };
 use bevy::{
     camera::Exposure,
@@ -39,7 +39,7 @@ fn spawn_player_camera(mut commands: Commands) {
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         Camera3d::default(),
-        Transform::from_translation(Vec3::new(0.0, 1.0, 1.0))
+        Transform::from_translation(Vec3::new(0.0, 10.0, 1.0))
             .looking_at(Vec3::ZERO + Vec3::Y, Vec3::Y),
         FollowTerrainMarker,
         FreeCamera::default(),
