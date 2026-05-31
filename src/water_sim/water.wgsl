@@ -78,6 +78,8 @@ fn update_flows(invocation_id: vec3<u32>) {
 
     let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 10.0;
     let d = distance_from_displacement(p);
+    let dampening = 0.118;
+    let momentum = 0.99;
 
     // Horizontal edges (flow_x): (ex, y), ex in [0..W]
     if (x <= size.x && y < size.y) {
@@ -99,14 +101,13 @@ fn update_flows(invocation_id: vec3<u32>) {
             } else if dh > 0.0 {
                 dh = min(dh, hL.y);
             }
-            // simple acceleration + damping
-            f = f *0.99 + dh * 0.4125;
+            f = f *momentum + dh * dampening;
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
-                if p.x != displacement_circle.x || p.y != displacement_circle.y {
+                // if p.x != displacement_circle.x || p.y != displacement_circle.y {
                     let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(1.0, 0.0)) * displacement_circle.w * 0.1 * 0.003;
-                }
+                    f += dot(dir, vec2f(1.0, 0.0)) * displacement_circle.w;
+                // }
             }
 
             set_flow_x(vec2i(ex, ey), f);
@@ -133,13 +134,13 @@ fn update_flows(invocation_id: vec3<u32>) {
             } else if dh > 0.0 {
                 dh = min(dh, hD.y);
             }
-            f = f *0.99 + dh * 0.4125;
+            f = f * momentum + dh * dampening;
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
-                if p.x != displacement_circle.x || p.y != displacement_circle.y {
+                // if p.x != displacement_circle.x || p.y != displacement_circle.y {
                     let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(0.0, 1.0)) * displacement_circle.w*0.1 * 0.003;
-                }
+                    f += dot(dir, vec2f(0.0, 1.0)) * displacement_circle.w;
+                // }
             }
             set_flow_y(vec2i(ex, ey), f);
         }

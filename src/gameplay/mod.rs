@@ -177,7 +177,7 @@ fn spawn_plane_dbg(
         Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * 19.0),
         WaterDisplacement {
             radius: 3.0,
-            strength: 90.0,
+            strength: 1.0,
         },
         Collider::sphere(3.0),
         RigidBody::Dynamic,
@@ -190,7 +190,7 @@ fn spawn_plane_dbg(
         Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * -39.0),
         WaterDisplacement {
             radius: 1.0,
-            strength: 30.0,
+            strength: 1.0,
         },
         Collider::sphere(1.0),
         RigidBody::Dynamic,
