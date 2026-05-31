@@ -73,17 +73,17 @@ fn collect_displacements(
     for (mut velocity, transform, w) in &mut d {
         let h = height_from_texture(water, transform.translation.xz());
         let base_h = height_from_texture(base, transform.translation.xz());
-        if (transform.translation.y - w.radius) < (h + base_h) && h > 0.0 {
-            let t_h = transform.translation.y;
-            let depth = (h + base_h) - t_h;
+        let t_h = transform.translation.y;
+        let relative_to_water = (t_h - w.radius) - base_h;
+        if relative_to_water < h && h > 0.0 {
+            let in_water = (h - relative_to_water).min(w.radius * 2.0) / (w.radius * 2.0);
             buffer.buffer.push(Vec4::new(
                 transform.translation.x,
                 transform.translation.z,
                 w.radius,
-                w.strength * (depth + 0.2),
+                w.strength * in_water,
             ));
-            // velocity.0 *= 0.8;
-            velocity.0.y = depth * 0.8;
+            velocity.0.y = in_water * 0.8;
         }
     }
 }
