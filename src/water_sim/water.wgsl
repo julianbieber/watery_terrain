@@ -8,10 +8,13 @@
 
 @group(0) @binding(5) var base_height_texture: texture_storage_2d<r32float, read>;
 
+// Tile size in texture pixels
+const TILE_SIZE: i32 = 1024;
 
 struct SimParams {
     id: i32,
-    _pad: vec3f,
+    tile_index: i32,
+    _pad: vec2f,
 };
 var<push_constant> sim: SimParams;
 
@@ -19,7 +22,10 @@ var<push_constant> sim: SimParams;
 
 // returns base and water height separately
 fn get_height(location: vec2i) -> vec2f {
-    return vec2f(textureLoad(base_height_texture, location).x,textureLoad(input, location).x);
+    return vec2f(
+        textureLoad(base_height_texture, location).x,
+        textureLoad(input, location).x
+    );
 }
 
 fn set_height(location: vec2i, v: f32) {
@@ -45,7 +51,7 @@ fn set_flow_y(edge: vec2i, v: f32) {
 struct DisplacementResult {
     distance: f32,
     index: i32,
-}
+};
 
 fn distance_from_displacement(p: vec2f) -> DisplacementResult {
     let l = arrayLength(&displacements);
@@ -54,7 +60,7 @@ fn distance_from_displacement(p: vec2f) -> DisplacementResult {
 
     for (var i: u32 = 0; i < l; i = i + 1) {
         let c = displacements[i];
-        let d = length(c.xy - p)-c.z;
+        let d = length(c.xy - p) - c.z;
         if d < m {
             m = d;
             current_min = i32(i);
@@ -66,19 +72,37 @@ fn distance_from_displacement(p: vec2f) -> DisplacementResult {
 
 fn distance_from_specific(p: vec2f, i: u32) -> f32 {
     let c = displacements[i];
-    let d = length(c.xy - p)-c.z;
+    let d = length(c.xy - p) - c.z;
     return d;
 }
+
+// Edge dampening based on distance from tile center
+// Dampens water movement near tile edges to reduce artifacts
+fn get_edge_dampening(local_pos: vec2i) -> f32 {
+    // local_pos is within [0, TILE_SIZE-1] x [0, TILE_SIZE-1]
+    let center = vec2f(f32(TILE_SIZE) / 2.0);
+    let dist_from_center = distance(vec2f(local_pos), center);
+    let max_dist = f32(TILE_SIZE) / 2.0;
+    
+    // Dampen more as we get closer to the edge
+    // At center: dampening = 1.0 (no dampening)
+    // At edge: dampening = 0.0 (full dampening)
+    // Use smoothstep for smooth transition starting at 70% from center
+    let t = dist_from_center / max_dist;
+    return 1.0 - smoothstep(0.7, 1.0, t);
+}
+
 // -------- pass 0: update flows on edges --------
 
 fn update_flows(invocation_id: vec3<u32>) {
-    let size = vec2i(textureDimensions(input)); // (W,H)
+    let size = vec2i(TILE_SIZE, TILE_SIZE);
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
 
-    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 10.0;
-    let d = distance_from_displacement(p);
-    let dampening = 0.118;
+    let p = vec2f(f32(x), f32(y));
+    let local_pos = vec2i(x, y);
+    let dampening_factor = get_edge_dampening(local_pos);
+    let dampening = 0.118 * dampening_factor;
     let momentum = 0.99;
 
     // Horizontal edges (flow_x): (ex, y), ex in [0..W]
@@ -101,15 +125,16 @@ fn update_flows(invocation_id: vec3<u32>) {
             } else if dh > 0.0 {
                 dh = min(dh, hL.y);
             }
-            f = f *momentum + dh * dampening;
+            f = f * momentum + dh * dampening;
+            
+            // Add displacement effects
+            let d = distance_from_displacement(p);
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
-                // if p.x != displacement_circle.x || p.y != displacement_circle.y {
-                    let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(1.0, 0.0)) * displacement_circle.w;
-                // }
+                let dir = normalize(p - displacement_circle.xy);
+                f += dot(dir, vec2f(1.0, 0.0)) * displacement_circle.w;
             }
-
+            
             set_flow_x(vec2i(ex, ey), f);
         }
     }
@@ -135,13 +160,14 @@ fn update_flows(invocation_id: vec3<u32>) {
                 dh = min(dh, hD.y);
             }
             f = f * momentum + dh * dampening;
+            
+            let d = distance_from_displacement(p);
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
-                // if p.x != displacement_circle.x || p.y != displacement_circle.y {
-                    let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(0.0, 1.0)) * displacement_circle.w;
-                // }
+                let dir = normalize(p - displacement_circle.xy);
+                f += dot(dir, vec2f(0.0, 1.0)) * displacement_circle.w;
             }
+            
             set_flow_y(vec2i(ex, ey), f);
         }
     }
@@ -151,13 +177,15 @@ fn update_flows(invocation_id: vec3<u32>) {
 
 fn update_water_height(invocation_id: vec3<u32>) {
     let l = vec2i(invocation_id.xy);
-    let size = vec2i(textureDimensions(input));
+    let size = vec2i(TILE_SIZE, TILE_SIZE);
 
     if (l.x < 0 || l.y < 0 || l.x >= size.x || l.y >= size.y) {
         return;
     }
 
     let own = get_height(l).y;
+    let local_pos = l;
+    let dampening_factor = get_edge_dampening(local_pos);
 
     // edges around cell (x,y):
     // flow_x(ex,y): between (ex-1,y) -> (ex,y), + is left->right
@@ -170,8 +198,11 @@ fn update_water_height(invocation_id: vec3<u32>) {
 
     // net inflow (positive = gain)
     let net = (fx_left - fx_right) + (fy_down - fy_up);
+    
+    // Apply edge dampening - reduce water movement near edges
+    let net_dampened = net * dampening_factor;
 
-    var new_height = max(0.0, own + net);
+    var new_height = max(0.0, own + net_dampened);
 
     set_height(l, new_height);
 }

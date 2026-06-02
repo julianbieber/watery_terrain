@@ -14,8 +14,8 @@ use bevy_sky_gradient::plugin::SkyboxMagnetTag;
 use crate::{
     heightmap::{create_terrain_heightmap, create_water_heightmap},
     render::clipmap::{
-        ClipmapMarker, FollowTerrainMarker, TerrainHeightMapMesh, TerrainMaterial,
-        WaterTerrainMaterial,
+        ClipmapMarker, FollowTerrainMarker, TerrainHeightMapMesh,
+        TiledTerrainMaterial, TiledWaterTerrainMaterial,
     },
     screens::Screen,
     water_sim::{WaterDisplacement, WaterMarker},
@@ -63,8 +63,8 @@ fn spawn_player_camera(mut commands: Commands) {
 fn spawn_plane_dbg(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
-    mut rock_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TiledWaterTerrainMaterial>>>,
+    mut tiled_rock_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TiledTerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
@@ -75,13 +75,42 @@ fn spawn_plane_dbg(
         smallest_quad_count: 16 * 10,
     };
 
-    let heightmap = create_water_heightmap();
-    let mesh = clipmap.create_base_mesh();
-    let heightmap_texture = images.add(heightmap.image());
+    // Create 9 heightmap tiles for water and terrain
+    let mut water_heightmap_tiles = Vec::new();
+    let mut rock_heightmap_tiles = Vec::new();
+    
+    for _ in 0..9 {
+        let water_hm = create_water_heightmap();
+        water_heightmap_tiles.push(images.add(water_hm.image()));
+        
+        let rock_hm = create_terrain_heightmap();
+        rock_heightmap_tiles.push(images.add(rock_hm.image()));
+    }
 
-    let rock_heightmap = create_terrain_heightmap();
+    let mesh = clipmap.create_base_mesh();
     let rock_mesh = clipmap.create_base_mesh();
-    let rock_heightmap_texture = images.add(rock_heightmap.image());
+    // Create tiled water material
+    let water_material = TiledWaterTerrainMaterial {
+        water_00: water_heightmap_tiles[0].clone(),
+        water_01: water_heightmap_tiles[1].clone(),
+        water_02: water_heightmap_tiles[2].clone(),
+        water_10: water_heightmap_tiles[3].clone(),
+        water_11: water_heightmap_tiles[4].clone(),
+        water_12: water_heightmap_tiles[5].clone(),
+        water_20: water_heightmap_tiles[6].clone(),
+        water_21: water_heightmap_tiles[7].clone(),
+        water_22: water_heightmap_tiles[8].clone(),
+        base_00: rock_heightmap_tiles[0].clone(),
+        base_01: rock_heightmap_tiles[1].clone(),
+        base_02: rock_heightmap_tiles[2].clone(),
+        base_10: rock_heightmap_tiles[3].clone(),
+        base_11: rock_heightmap_tiles[4].clone(),
+        base_12: rock_heightmap_tiles[5].clone(),
+        base_20: rock_heightmap_tiles[6].clone(),
+        base_21: rock_heightmap_tiles[7].clone(),
+        base_22: rock_heightmap_tiles[8].clone(),
+    };
+
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
@@ -95,8 +124,8 @@ fn spawn_plane_dbg(
                     "water/normal.png",
                     |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
                 )),
-                metallic: 1.0,             // set, otherwise texture has no effect
-                perceptual_roughness: 1.0, // set, otherwise texture has no effect
+                metallic: 1.0,
+                perceptual_roughness: 1.0,
                 metallic_roughness_texture: Some(
                     asset_server.load_with_settings(
                         "water/orm.png",
@@ -109,26 +138,38 @@ fn spawn_plane_dbg(
                         |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
                     ),
                 ),
-                depth_map: Some(asset_server.load_with_settings(
-                    "water/depth.png",
-                    |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
-                )),
+                depth_map: Some(
+                    asset_server.load_with_settings(
+                        "water/depth.png",
+                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    ),
+                ),
                 flip_normal_map_y: true,
                 ior: 1.33,
                 ..Default::default()
             },
-            extension: WaterTerrainMaterial {
-                water: heightmap_texture.clone(),
-                base: rock_heightmap_texture.clone(),
-            },
+            extension: water_material,
         })),
     ));
+
+    // Create tiled terrain material
+    let terrain_material = TiledTerrainMaterial {
+        height_00: rock_heightmap_tiles[0].clone(),
+        height_01: rock_heightmap_tiles[1].clone(),
+        height_02: rock_heightmap_tiles[2].clone(),
+        height_10: rock_heightmap_tiles[3].clone(),
+        height_11: rock_heightmap_tiles[4].clone(),
+        height_12: rock_heightmap_tiles[5].clone(),
+        height_20: rock_heightmap_tiles[6].clone(),
+        height_21: rock_heightmap_tiles[7].clone(),
+        height_22: rock_heightmap_tiles[8].clone(),
+    };
 
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
         Mesh3d(meshes.add(rock_mesh)),
-        MeshMaterial3d(rock_materials.add(ExtendedMaterial {
+        MeshMaterial3d(tiled_rock_materials.add(ExtendedMaterial {
             base: StandardMaterial {
                 base_color_texture: Some(asset_server.load("rock/base_color.png")),
                 emissive_texture: Some(asset_server.load("rock/emissive.png")),
@@ -136,8 +177,8 @@ fn spawn_plane_dbg(
                     "rock/normal.png",
                     |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
                 )),
-                metallic: 1.0,             // set, otherwise texture has no effect
-                perceptual_roughness: 1.0, // set, otherwise texture has no effect
+                metallic: 1.0,
+                perceptual_roughness: 1.0,
                 metallic_roughness_texture: Some(
                     asset_server.load_with_settings(
                         "rock/orm.png",
@@ -160,15 +201,15 @@ fn spawn_plane_dbg(
                 ior: 1.33,
                 ..Default::default()
             },
-            extension: TerrainMaterial {
-                height: rock_heightmap_texture.clone(),
-            },
+            extension: terrain_material,
         })),
     ));
-    // seperate entity so the collider does not follow the camera
+    
+    // Use center rock heightmap for collider
+    let center_rock_heightmap = create_terrain_heightmap();
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
-        rock_heightmap.avian(),
+        center_rock_heightmap.avian(),
         RigidBody::Static,
     ));
 

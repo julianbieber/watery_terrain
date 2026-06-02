@@ -396,6 +396,182 @@ impl MaterialExtension for WaterTerrainMaterial {
     // }
 }
 
+// ============================================
+// Tiled Materials for 3x3 grid
+// ============================================
+
+/// Tiled terrain material - uses 9 heightmap textures for a 3x3 grid
+#[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
+pub struct TiledTerrainMaterial {
+    // 9 heightmap textures arranged in 3x3 grid (row-major order)
+    #[texture(100)] #[sampler(101)] pub height_00: Handle<Image>, // top-left
+    #[texture(102)] #[sampler(103)] pub height_01: Handle<Image>, // top-center
+    #[texture(104)] #[sampler(105)] pub height_02: Handle<Image>, // top-right
+    #[texture(106)] #[sampler(107)] pub height_10: Handle<Image>, // middle-left
+    #[texture(108)] #[sampler(109)] pub height_11: Handle<Image>, // center
+    #[texture(110)] #[sampler(111)] pub height_12: Handle<Image>, // middle-right
+    #[texture(112)] #[sampler(113)] pub height_20: Handle<Image>, // bottom-left
+    #[texture(114)] #[sampler(115)] pub height_21: Handle<Image>, // bottom-center
+    #[texture(116)] #[sampler(117)] pub height_22: Handle<Image>, // bottom-right
+}
+
+impl MaterialExtension for TiledTerrainMaterial {
+    fn vertex_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("tiled_terrain.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn enable_prepass() -> bool {
+        true
+    }
+
+    fn enable_shadows() -> bool {
+        true
+    }
+
+    fn prepass_vertex_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("tiled_terrain.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn deferred_vertex_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("tiled_terrain.wgsl")).with_source("embedded"),
+        )
+    }
+}
+
+impl TiledTerrainMaterial {
+    /// Get height texture for a grid position
+    pub fn get_height_texture(&self, grid_x: i8, grid_z: i8) -> &Handle<Image> {
+        // Convert grid position to index
+        // grid_z: -1 (top), 0 (middle), 1 (bottom)
+        // grid_x: -1 (left), 0 (center), 1 (right)
+        let row = (grid_z + 1) as usize;
+        let col = (grid_x + 1) as usize;
+        let index = row * 3 + col;
+        
+        match index {
+            0 => &self.height_00,
+            1 => &self.height_01,
+            2 => &self.height_02,
+            3 => &self.height_10,
+            4 => &self.height_11,
+            5 => &self.height_12,
+            6 => &self.height_20,
+            7 => &self.height_21,
+            8 => &self.height_22,
+            _ => &self.height_11, // fallback to center
+        }
+    }
+}
+
+/// Tiled water terrain material - uses 9 water and 9 base height textures
+#[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
+pub struct TiledWaterTerrainMaterial {
+    // Water textures (9 tiles)
+    #[texture(100)] #[sampler(101)] pub water_00: Handle<Image>,
+    #[texture(102)] #[sampler(103)] pub water_01: Handle<Image>,
+    #[texture(104)] #[sampler(105)] pub water_02: Handle<Image>,
+    #[texture(106)] #[sampler(107)] pub water_10: Handle<Image>,
+    #[texture(108)] #[sampler(109)] pub water_11: Handle<Image>,
+    #[texture(110)] #[sampler(111)] pub water_12: Handle<Image>,
+    #[texture(112)] #[sampler(113)] pub water_20: Handle<Image>,
+    #[texture(114)] #[sampler(115)] pub water_21: Handle<Image>,
+    #[texture(116)] #[sampler(117)] pub water_22: Handle<Image>,
+    
+    // Base height textures (9 tiles)
+    #[texture(118)] #[sampler(119)] pub base_00: Handle<Image>,
+    #[texture(120)] #[sampler(121)] pub base_01: Handle<Image>,
+    #[texture(122)] #[sampler(123)] pub base_02: Handle<Image>,
+    #[texture(124)] #[sampler(125)] pub base_10: Handle<Image>,
+    #[texture(126)] #[sampler(127)] pub base_11: Handle<Image>,
+    #[texture(128)] #[sampler(129)] pub base_12: Handle<Image>,
+    #[texture(130)] #[sampler(131)] pub base_20: Handle<Image>,
+    #[texture(132)] #[sampler(133)] pub base_21: Handle<Image>,
+    #[texture(134)] #[sampler(135)] pub base_22: Handle<Image>,
+}
+
+impl MaterialExtension for TiledWaterTerrainMaterial {
+    fn vertex_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("tiled_water.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn enable_prepass() -> bool {
+        true
+    }
+
+    fn enable_shadows() -> bool {
+        true
+    }
+
+    fn prepass_vertex_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("tiled_water.wgsl")).with_source("embedded"),
+        )
+    }
+
+    fn deferred_vertex_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("tiled_water.wgsl")).with_source("embedded"),
+        )
+    }
+}
+
+impl TiledWaterTerrainMaterial {
+    /// Get water and base textures for a grid position
+    pub fn get_textures(&self, grid_x: i8, grid_z: i8) -> (Handle<Image>, Handle<Image>) {
+        let row = (grid_z + 1) as usize;
+        let col = (grid_x + 1) as usize;
+        let index = row * 3 + col;
+        
+        let water = match index {
+            0 => self.water_00.clone(),
+            1 => self.water_01.clone(),
+            2 => self.water_02.clone(),
+            3 => self.water_10.clone(),
+            4 => self.water_11.clone(),
+            5 => self.water_12.clone(),
+            6 => self.water_20.clone(),
+            7 => self.water_21.clone(),
+            8 => self.water_22.clone(),
+            _ => self.water_11.clone(),
+        };
+        
+        let base = match index {
+            0 => self.base_00.clone(),
+            1 => self.base_01.clone(),
+            2 => self.base_02.clone(),
+            3 => self.base_10.clone(),
+            4 => self.base_11.clone(),
+            5 => self.base_12.clone(),
+            6 => self.base_20.clone(),
+            7 => self.base_21.clone(),
+            8 => self.base_22.clone(),
+            _ => self.base_11.clone(),
+        };
+        
+        (water, base)
+    }
+    
+    /// Create a tiled material from a single water and base texture
+    /// This replicates the same texture to all 9 tiles
+    pub fn from_single(water: Handle<Image>, base: Handle<Image>) -> Self {
+        Self {
+            water_00: water.clone(), water_01: water.clone(), water_02: water.clone(),
+            water_10: water.clone(), water_11: water.clone(), water_12: water.clone(),
+            water_20: water.clone(), water_21: water.clone(), water_22: water,
+            base_00: base.clone(), base_01: base.clone(), base_02: base.clone(),
+            base_10: base.clone(), base_11: base.clone(), base_12: base.clone(),
+            base_20: base.clone(), base_21: base.clone(), base_22: base,
+        }
+    }
+}
+
 #[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
 pub struct TerrainMaterial {
     #[texture(100)]
