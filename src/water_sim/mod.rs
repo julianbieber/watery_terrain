@@ -7,12 +7,10 @@ use bevy::{
         Render, RenderApp, RenderStartup,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
-        render_graph::{self, RenderGraph, RenderLabel},
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
-            PipelineCache, PushConstantRange, ShaderStages, StorageBuffer, TextureDimension,
-            TextureUsages,
+            PipelineCache, ShaderStages, StorageBuffer, TextureDimension, TextureUsages,
             binding_types::{storage_buffer_read_only, texture_storage_2d},
         },
         renderer::{RenderDevice, RenderQueue},
@@ -48,9 +46,6 @@ impl Plugin for WaterSimPlugin {
             buffer: displacements,
         });
 
-        let mut render_graph = render_app.world_mut().resource_mut::<RenderGraph>();
-        render_graph.add_node(WaterRenderLabel, WaterRenderNode);
-        render_graph.add_node_edge(WaterRenderLabel, bevy::render::graph::CameraDriverLabel);
         app.add_observer(init_internal_textures);
     }
 }
@@ -88,9 +83,6 @@ fn collect_displacements(
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-struct WaterRenderLabel;
-
 #[derive(Resource)]
 struct WaterRenderPipeline {
     layout: BindGroupLayoutDescriptor,
@@ -103,54 +95,50 @@ struct WaterBindGroups([BindGroup; 2]);
 #[derive(Resource)]
 struct WaterBindGroupsSwap(bool);
 
-struct WaterRenderNode;
-impl bevy::render::render_graph::Node for WaterRenderNode {
-    fn run<'w>(
-        &self,
-        _graph: &mut render_graph::RenderGraphContext,
-        render_context: &mut bevy::render::renderer::RenderContext<'w>,
-        world: &'w World,
-    ) -> std::result::Result<(), render_graph::NodeRunError> {
-        if let Some(bind_groups) = world.get_resource::<WaterBindGroups>() {
-            let pipeline_cache = world.resource::<PipelineCache>();
-            let pipeline = world.resource::<WaterRenderPipeline>();
-            let swap = world.resource::<WaterBindGroupsSwap>();
+fn run_water_sim<'w>(
+    _graph: &mut render_graph::RenderGraphContext,
+    render_context: &mut bevy::render::renderer::RenderContext<'w>,
+    world: &'w World,
+) -> std::result::Result<(), render_graph::NodeRunError> {
+    if let Some(bind_groups) = world.get_resource::<WaterBindGroups>() {
+        let pipeline_cache = world.resource::<PipelineCache>();
+        let pipeline = world.resource::<WaterRenderPipeline>();
+        let swap = world.resource::<WaterBindGroupsSwap>();
 
-            let mut pass = render_context
-                .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = render_context
+            .command_encoder()
+            .begin_compute_pass(&ComputePassDescriptor::default());
 
-            let update_pipeline = pipeline_cache
-                .get_compute_pipeline(pipeline.pipeline)
-                .unwrap();
-            pass.set_bind_group(0, &bind_groups.0[swap.0 as usize], &[]);
-            pass.set_pipeline(update_pipeline);
+        let update_pipeline = pipeline_cache
+            .get_compute_pipeline(pipeline.pipeline)
+            .unwrap();
+        pass.set_bind_group(0, &bind_groups.0[swap.0 as usize], &[]);
+        pass.set_pipeline(update_pipeline);
 
-            pass.set_push_constants(
-                0,
-                bytemuck::bytes_of(&SimParams {
-                    id: 0,
-                    _pad: Vec3::ZERO,
-                }),
-            );
-            pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
+        pass.set_push_constants(
+            0,
+            bytemuck::bytes_of(&SimParams {
+                id: 0,
+                _pad: Vec3::ZERO,
+            }),
+        );
+        pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
 
-            pass.set_push_constants(
-                0,
-                bytemuck::bytes_of(&SimParams {
-                    id: 1,
-                    _pad: Vec3::ZERO,
-                }),
-            );
-            pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
-        }
-        Ok(())
+        pass.set_push_constants(
+            0,
+            bytemuck::bytes_of(&SimParams {
+                id: 1,
+                _pad: Vec3::ZERO,
+            }),
+        );
+        pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
     }
+    Ok(())
+}
 
-    fn update(&mut self, world: &mut World) {
-        let mut s = world.resource_mut::<WaterBindGroupsSwap>();
-        s.0 = !s.0;
-    }
+fn update_water_sim(world: &mut World) {
+    let mut s = world.resource_mut::<WaterBindGroupsSwap>();
+    s.0 = !s.0;
 }
 
 #[repr(C)]
