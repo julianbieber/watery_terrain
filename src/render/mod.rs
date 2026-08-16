@@ -35,7 +35,7 @@ fn swap_textures(
     >,
     mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
 ) {
-    let a = materials.get_mut(water.0.id()).unwrap();
+    let mut a = materials.get_mut(water.0.id()).unwrap();
     if a.extension.water == textures.texture_a {
         a.extension.water = textures.texture_b.clone();
     } else {

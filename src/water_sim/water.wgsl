@@ -13,7 +13,7 @@ struct SimParams {
     id: i32,
     _pad: vec3f,
 };
-var<push_constant> sim: SimParams;
+var<immediate> sim: SimParams;
 
 // -------- helpers --------
 

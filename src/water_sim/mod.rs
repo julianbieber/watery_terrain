@@ -13,7 +13,7 @@ use bevy::{
             PipelineCache, ShaderStages, StorageBuffer, TextureDimension, TextureUsages,
             binding_types::{storage_buffer_read_only, texture_storage_2d},
         },
-        renderer::{RenderDevice, RenderQueue},
+        renderer::{RenderContext, RenderDevice, RenderQueue},
         texture::GpuImage,
     },
 };
@@ -45,6 +45,7 @@ impl Plugin for WaterSimPlugin {
         render_app.insert_resource(DisplacementBuffer {
             buffer: displacements,
         });
+        render_app.add_systems(RenderGraph, run_water_sim);
 
         app.add_observer(init_internal_textures);
     }
@@ -95,45 +96,40 @@ struct WaterBindGroups([BindGroup; 2]);
 #[derive(Resource)]
 struct WaterBindGroupsSwap(bool);
 
-fn run_water_sim<'w>(
-    _graph: &mut render_graph::RenderGraphContext,
-    render_context: &mut bevy::render::renderer::RenderContext<'w>,
-    world: &'w World,
-) -> std::result::Result<(), render_graph::NodeRunError> {
-    if let Some(bind_groups) = world.get_resource::<WaterBindGroups>() {
-        let pipeline_cache = world.resource::<PipelineCache>();
-        let pipeline = world.resource::<WaterRenderPipeline>();
-        let swap = world.resource::<WaterBindGroupsSwap>();
+fn run_water_sim(
+    mut render_context: RenderContext,
+    pipeline: If<Res<WaterRenderPipeline>>,
+    pipeline_cache: If<Res<PipelineCache>>,
+    bind_groups: If<Res<WaterBindGroups>>,
+    swap: If<Res<WaterBindGroupsSwap>>,
+) {
+    let mut pass = render_context
+        .command_encoder()
+        .begin_compute_pass(&ComputePassDescriptor::default());
 
-        let mut pass = render_context
-            .command_encoder()
-            .begin_compute_pass(&ComputePassDescriptor::default());
+    let update_pipeline = pipeline_cache
+        .get_compute_pipeline(pipeline.pipeline)
+        .unwrap();
+    pass.set_bind_group(0, &bind_groups.0.0[swap.0.0 as usize], &[]);
+    pass.set_pipeline(update_pipeline);
 
-        let update_pipeline = pipeline_cache
-            .get_compute_pipeline(pipeline.pipeline)
-            .unwrap();
-        pass.set_bind_group(0, &bind_groups.0[swap.0 as usize], &[]);
-        pass.set_pipeline(update_pipeline);
+    pass.set_immediates(
+        0,
+        bytemuck::bytes_of(&SimParams {
+            id: 0,
+            _pad: Vec3::ZERO,
+        }),
+    );
+    pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
 
-        pass.set_push_constants(
-            0,
-            bytemuck::bytes_of(&SimParams {
-                id: 0,
-                _pad: Vec3::ZERO,
-            }),
-        );
-        pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
-
-        pass.set_push_constants(
-            0,
-            bytemuck::bytes_of(&SimParams {
-                id: 1,
-                _pad: Vec3::ZERO,
-            }),
-        );
-        pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
-    }
-    Ok(())
+    pass.set_immediates(
+        0,
+        bytemuck::bytes_of(&SimParams {
+            id: 1,
+            _pad: Vec3::ZERO,
+        }),
+    );
+    pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
 }
 
 fn update_water_sim(world: &mut World) {
@@ -247,10 +243,7 @@ fn init_water_render(
         layout: vec![texture_bind_group_layout.clone()],
         shader,
         entry_point: Some(Cow::from("main")),
-        push_constant_ranges: vec![PushConstantRange {
-            stages: ShaderStages::COMPUTE,
-            range: 0..std::mem::size_of::<SimParams>() as u32,
-        }],
+        immediate_size: std::mem::size_of::<SimParams>() as u32,
         ..Default::default()
     });
     commands.insert_resource(WaterRenderPipeline {
