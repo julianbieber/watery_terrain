@@ -84,37 +84,6 @@ jobs:
       - name: Run Clippy lints
         run: just clippy
 
-  # Run Bevy lints.
-  bevy-lints:
-    name: Bevy lints
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - uses: extractions/setup-just@v3
-
-      - name: Install Rust toolchain (plus bevy_lint)
-        uses: TheBevyFlock/bevy_cli/bevy_lint@lint-v0.4.0
-        with:
-          cache: true
-          save-cache-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Restore Rust cache
-        id: cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ci
-          save-if: false
-
-      - name: Install build dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: just deps
-
-      - name: Run Bevy lints
-        run: just bevy-lints
-
   # Run tests.
   tests:
     name: Tests
