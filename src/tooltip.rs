@@ -5,12 +5,11 @@ use bevy::{
     ecs::spawn::SpawnableList,
     feathers::{
         constants::fonts,
-        controls::ButtonProps,
+        controls::FeathersButtonProps,
         cursor::EntityCursor,
         dark_theme::create_dark_theme,
         font_styles::InheritableFont,
-        handle_or_path::HandleOrPath,
-        theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeFontColor, ThemeToken, UiTheme},
+        theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeToken, UiTheme},
     },
     input_focus::tab_navigation::TabIndex,
     prelude::*,
@@ -31,7 +30,7 @@ pub struct TooltipMap {
 
 #[derive(Resource)]
 pub struct TooltipStack {
-    pub entities: Vec<Entity>,
+    pub entities: Vec<(Entity, bool)>,
 }
 
 #[derive(Clone)]
@@ -90,9 +89,9 @@ impl Plugin for TooltipPlugin {
 
 pub fn spawn_tooltip(
     mut commands: Commands,
-    screen: Screen,
+    asset_server: Res<AssetServer>,
     known_tooltips: &HashMap<String, Tooltip>,
-    stack: &mut Vec<Entity>,
+    stack: &mut Vec<(Entity, bool)>,
     text: &str,
     at: (Val, Val),
     closable: bool,
@@ -100,7 +99,7 @@ pub fn spawn_tooltip(
     let font_size = 9.0;
     let entity = commands
         .spawn((
-            DespawnOnExit(screen),
+            DespawnOnExit(Screen::Help),
             Node {
                 position_type: PositionType::Absolute,
                 left: at.0,
@@ -130,29 +129,32 @@ pub fn spawn_tooltip(
                             let t = tooltip.text.clone();
                             row.spawn((
                         clickable_text(
-                            ButtonProps::default(),
+                            FeathersButtonProps::default(),
                             (),
                             Spawn((
                                 Text::new(tooltip.name.as_str()),
                                 TextFont::from_font_size(font_size),
                                 TextColor(Color::oklcha(0.92, -0.5, 385.0, 1.0)),
                             )),
+                            &asset_server
                         ),
                         observe(
                             move |_: On<Activate>,
                                   commands: Commands,
+                                  local_asset_server: Res<AssetServer>,
                                   known: Res<TooltipMap>,
                                   mut stack: ResMut<TooltipStack>,
                                   window: Single<&Window, With<PrimaryWindow>>| {
                                 if let Some(mouse) =window.cursor_position() {
                                     spawn_tooltip(
                                         commands,
-                                        screen,
+                                        local_asset_server,
                                         &known.tooltips,
                                         &mut stack.entities,
                                         &t,
                                         (px(mouse.x), px(mouse.y)),
                                         true
+
                                     );
                                 }
                             },
@@ -174,15 +176,14 @@ pub fn spawn_tooltip(
             }
         })
         .id();
-    if closable {
-        stack.push(entity);
-    }
+    stack.push((entity, closable));
 }
 
 pub fn clickable_text<C: SpawnableList<ChildOf> + Send + Sync + 'static, B: Bundle>(
-    props: ButtonProps,
+    props: FeathersButtonProps,
     overrides: B,
     children: C,
+    asset_server: &AssetServer,
 ) -> impl Bundle {
     (
         Node {
@@ -192,10 +193,10 @@ pub fn clickable_text<C: SpawnableList<ChildOf> + Send + Sync + 'static, B: Bund
         props.variant,
         EntityCursor::System(bevy::window::SystemCursorIcon::Help),
         TabIndex(0),
-        ThemeFontColor(TOOLTIP_CLICKABLE_TEXT),
         InheritableFont {
-            font: HandleOrPath::Path(fonts::REGULAR.to_owned()),
-            font_size: 14.0,
+            font: asset_server.load(fonts::REGULAR),
+            font_size: FontSize::Px(14.0),
+            ..Default::default()
         },
         overrides,
         Children::spawn(children),
@@ -209,7 +210,7 @@ pub fn handle_escape_help(
     mut stack: ResMut<TooltipStack>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
-        if let Some(last) = stack.entities.pop() {
+        if let Some((last, true)) = stack.entities.pop() {
             commands.entity(last).despawn();
         } else {
             next.set(Screen::Main);
