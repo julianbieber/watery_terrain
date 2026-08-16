@@ -9,7 +9,6 @@ use bevy::{
     pbr::ExtendedMaterial,
     prelude::*,
 };
-use bevy_sky_gradient::plugin::SkyboxMagnetTag;
 
 use crate::{
     heightmap::{create_terrain_heightmap, create_water_heightmap},
@@ -26,7 +25,6 @@ pub struct GameplayPlugin;
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PhysicsPlugins::default());
-        // app.add_plugins(PhysicsDebugPlugin {});
         app.insert_resource(Gravity::default());
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
@@ -39,7 +37,7 @@ fn spawn_player_camera(mut commands: Commands) {
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         Camera3d::default(),
-        Transform::from_translation(Vec3::new(0.0, 10.0, 1.0))
+        Transform::from_translation(Vec3::new(0.0, 100.0, 1.0))
             .looking_at(Vec3::ZERO + Vec3::Y, Vec3::Y),
         FollowTerrainMarker,
         FreeCamera::default(),
@@ -56,7 +54,7 @@ fn spawn_player_camera(mut commands: Commands) {
             color: Color::Srgba(Srgba::RED),
             ..default()
         },
-        SkyboxMagnetTag,
+        // SkyboxMagnetTag, // At the moment the skybox radius seems to hide the terrain
     ));
 }
 
@@ -143,7 +141,7 @@ fn spawn_plane_dbg(
         ClipmapMarker,
         Mesh3d(meshes.add(rock_mesh)),
         MeshMaterial3d(
-            rock_materials.add(ExtendedMaterial {
+            rock_materials.add(ExtendedMaterial::<StandardMaterial, TerrainMaterial> {
                 base: StandardMaterial {
                     base_color_texture: Some(asset_server.load("rock/base_color.png")),
                     emissive_texture: Some(asset_server.load("rock/emissive.png")),
@@ -186,7 +184,7 @@ fn spawn_plane_dbg(
                     ..Default::default()
                 },
                 extension: TerrainMaterial {
-                    height: rock_heightmap_texture.clone(),
+                    height: rock_heightmap_texture,
                 },
             }),
         ),

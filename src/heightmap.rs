@@ -54,7 +54,7 @@ pub struct Heightmap {
 }
 
 impl Heightmap {
-    pub const DIM: u32 = 128 * 16;
+    pub const DIM: u32 = 128 * 32;
     fn zero() -> Heightmap {
         Heightmap {
             values: vec![0.0; (Self::DIM * Self::DIM) as usize],

@@ -39,7 +39,7 @@ impl Plugin for WaterSimPlugin {
         );
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
-        render_app.add_systems(Render, prepare_water_bindgroups);
+        render_app.add_systems(Render, (prepare_water_bindgroups, update_water_sim).chain());
         render_app.insert_resource(WaterBindGroupsSwap(true));
         let displacements = StorageBuffer::<Vec<Vec4>>::from(Vec::new());
         render_app.insert_resource(DisplacementBuffer {
