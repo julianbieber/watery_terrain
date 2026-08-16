@@ -50,7 +50,7 @@ fn spawn_player_camera(mut commands: Commands) {
             sensor_height: 0.01866,
         }),
         PointLight {
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             intensity: 400000.0,
             range: 200000.0,
             color: Color::Srgba(Srgba::RED),
@@ -87,83 +87,109 @@ fn spawn_plane_dbg(
         ClipmapMarker,
         Mesh3d(meshes.add(mesh)),
         WaterMarker,
-        MeshMaterial3d(materials.add(ExtendedMaterial {
-            base: StandardMaterial {
-                base_color_texture: Some(asset_server.load("water/base_color.png")),
-                emissive_texture: Some(asset_server.load("water/emissive.png")),
-                normal_map_texture: Some(asset_server.load_with_settings(
-                    "water/normal.png",
-                    |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
-                )),
-                metallic: 1.0,             // set, otherwise texture has no effect
-                perceptual_roughness: 1.0, // set, otherwise texture has no effect
-                metallic_roughness_texture: Some(
-                    asset_server.load_with_settings(
-                        "water/orm.png",
-                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+        MeshMaterial3d(
+            materials.add(ExtendedMaterial {
+                base: StandardMaterial {
+                    base_color_texture: Some(asset_server.load("water/base_color.png")),
+                    emissive_texture: Some(asset_server.load("water/emissive.png")),
+                    normal_map_texture: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("water/normal.png"),
                     ),
-                ),
-                occlusion_texture: Some(
-                    asset_server.load_with_settings(
-                        "water/orm.png",
-                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    metallic: 1.0,             // set, otherwise texture has no effect
+                    perceptual_roughness: 1.0, // set, otherwise texture has no effect
+                    metallic_roughness_texture: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("water/orm.png"),
                     ),
-                ),
-                depth_map: Some(asset_server.load_with_settings(
-                    "water/depth.png",
-                    |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
-                )),
-                flip_normal_map_y: true,
-                ior: 1.33,
-                ..Default::default()
-            },
-            extension: WaterTerrainMaterial {
-                water: heightmap_texture.clone(),
-                base: rock_heightmap_texture.clone(),
-            },
-        })),
+                    occlusion_texture: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("water/orm.png"),
+                    ),
+                    depth_map: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("water/depth.png"),
+                    ),
+                    flip_normal_map_y: true,
+                    ior: 1.33,
+                    ..Default::default()
+                },
+                extension: WaterTerrainMaterial {
+                    water: heightmap_texture.clone(),
+                    base: rock_heightmap_texture.clone(),
+                },
+            }),
+        ),
     ));
 
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
         Mesh3d(meshes.add(rock_mesh)),
-        MeshMaterial3d(rock_materials.add(ExtendedMaterial {
-            base: StandardMaterial {
-                base_color_texture: Some(asset_server.load("rock/base_color.png")),
-                emissive_texture: Some(asset_server.load("rock/emissive.png")),
-                normal_map_texture: Some(asset_server.load_with_settings(
-                    "rock/normal.png",
-                    |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
-                )),
-                metallic: 1.0,             // set, otherwise texture has no effect
-                perceptual_roughness: 1.0, // set, otherwise texture has no effect
-                metallic_roughness_texture: Some(
-                    asset_server.load_with_settings(
-                        "rock/orm.png",
-                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+        MeshMaterial3d(
+            rock_materials.add(ExtendedMaterial {
+                base: StandardMaterial {
+                    base_color_texture: Some(asset_server.load("rock/base_color.png")),
+                    emissive_texture: Some(asset_server.load("rock/emissive.png")),
+                    normal_map_texture: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("rock/normal.png"),
                     ),
-                ),
-                occlusion_texture: Some(
-                    asset_server.load_with_settings(
-                        "rock/orm.png",
-                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    metallic: 1.0,             // set, otherwise texture has no effect
+                    perceptual_roughness: 1.0, // set, otherwise texture has no effect
+                    metallic_roughness_texture: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("rock/orm.png"),
                     ),
-                ),
-                depth_map: Some(
-                    asset_server.load_with_settings(
-                        "rock/depth.png",
-                        |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
+                    occlusion_texture: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("rock/orm.png"),
                     ),
-                ),
-                flip_normal_map_y: true,
-                ior: 1.33,
-                ..Default::default()
-            },
-            extension: TerrainMaterial {
-                height: rock_heightmap_texture.clone(),
-            },
-        })),
+                    depth_map: Some(
+                        asset_server
+                            .load_builder()
+                            .with_settings(|settings: &mut ImageLoaderSettings| {
+                                settings.is_srgb = false
+                            })
+                            .load("rock/depth.png"),
+                    ),
+                    flip_normal_map_y: true,
+                    ior: 1.33,
+                    ..Default::default()
+                },
+                extension: TerrainMaterial {
+                    height: rock_heightmap_texture.clone(),
+                },
+            }),
+        ),
     ));
     // seperate entity so the collider does not follow the camera
     commands.spawn((

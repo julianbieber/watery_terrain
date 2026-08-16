@@ -349,11 +349,11 @@ impl TerrainHeightMapMesh {
 
 #[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
 pub struct WaterTerrainMaterial {
-    #[texture(100)]
-    #[sampler(101)]
+    #[texture(100, visibility(vertex, fragment))]
+    #[sampler(101, visibility(vertex, fragment))]
     pub water: Handle<Image>,
-    #[texture(102)]
-    #[sampler(103)]
+    #[texture(102, visibility(vertex, fragment))]
+    #[sampler(103, visibility(vertex, fragment))]
     pub base: Handle<Image>,
 }
 
@@ -398,8 +398,8 @@ impl MaterialExtension for WaterTerrainMaterial {
 
 #[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
 pub struct TerrainMaterial {
-    #[texture(100)]
-    #[sampler(101)]
+    #[texture(100, visibility(vertex, fragment))]
+    #[sampler(101, visibility(vertex, fragment))]
     pub height: Handle<Image>,
 }
 
