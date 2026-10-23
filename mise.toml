@@ -1,0 +1,2 @@
+[tools]
+"cargo:https://github.com/julianbieber/bevy_pbr_generator" = "tag:v0.2"
