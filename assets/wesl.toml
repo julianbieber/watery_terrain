@@ -1,0 +1,6 @@
+edition = "2026_pre"
+package-manager = "cargo"
+root = "shaders"
+
+[dependencies]
+bevy_pbr_generator = { path = "/home/jbieber/fun_repos/bevy_pbr_generator" }
