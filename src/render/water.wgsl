@@ -73,7 +73,7 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
 
     out.position = position_world_to_clip(out.world_position.xyz);
 
-    out.uv = wrap(((out.world_position.xz+1024.0)/2048.0));
+    out.uv = wrap(((out.world_position.xz+1024.0)/2048.0)*40.0);
 
     return out;
 }
