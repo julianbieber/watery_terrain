@@ -80,60 +80,19 @@ fn spawn_plane_dbg(
     let rock_heightmap = create_terrain_heightmap();
     let rock_mesh = clipmap.create_base_mesh();
     let rock_heightmap_texture = images.add(rock_heightmap.image());
+    let material = water_material(&asset_server);
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
         Mesh3d(meshes.add(mesh)),
         WaterMarker,
-        MeshMaterial3d(
-            materials.add(ExtendedMaterial {
-                base: StandardMaterial {
-                    base_color_texture: Some(asset_server.load("water/base_color.png")),
-                    emissive_texture: Some(asset_server.load("water/emissive.png")),
-                    normal_map_texture: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("water/normal.png"),
-                    ),
-                    metallic: 1.0,             // set, otherwise texture has no effect
-                    perceptual_roughness: 1.0, // set, otherwise texture has no effect
-                    metallic_roughness_texture: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("water/orm.png"),
-                    ),
-                    occlusion_texture: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("water/orm.png"),
-                    ),
-                    depth_map: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("water/depth.png"),
-                    ),
-                    flip_normal_map_y: true,
-                    ior: 1.33,
-                    ..Default::default()
-                },
-                extension: WaterTerrainMaterial {
-                    water: heightmap_texture.clone(),
-                    base: rock_heightmap_texture.clone(),
-                },
-            }),
-        ),
+        MeshMaterial3d(materials.add(ExtendedMaterial {
+            base: material,
+            extension: WaterTerrainMaterial {
+                water: heightmap_texture.clone(),
+                base: rock_heightmap_texture.clone(),
+            },
+        })),
     ));
 
     commands.spawn((
@@ -142,47 +101,7 @@ fn spawn_plane_dbg(
         Mesh3d(meshes.add(rock_mesh)),
         MeshMaterial3d(
             rock_materials.add(ExtendedMaterial::<StandardMaterial, TerrainMaterial> {
-                base: StandardMaterial {
-                    base_color_texture: Some(asset_server.load("rock/base_color.png")),
-                    emissive_texture: Some(asset_server.load("rock/emissive.png")),
-                    normal_map_texture: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("rock/normal.png"),
-                    ),
-                    metallic: 1.0,             // set, otherwise texture has no effect
-                    perceptual_roughness: 1.0, // set, otherwise texture has no effect
-                    metallic_roughness_texture: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("rock/orm.png"),
-                    ),
-                    occlusion_texture: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("rock/orm.png"),
-                    ),
-                    depth_map: Some(
-                        asset_server
-                            .load_builder()
-                            .with_settings(|settings: &mut ImageLoaderSettings| {
-                                settings.is_srgb = false
-                            })
-                            .load("rock/depth.png"),
-                    ),
-                    flip_normal_map_y: true,
-                    ior: 1.33,
-                    ..Default::default()
-                },
+                base: land_material(&asset_server),
                 extension: TerrainMaterial {
                     height: rock_heightmap_texture,
                 },
@@ -222,6 +141,136 @@ fn spawn_plane_dbg(
         Mesh3d(meshes.add(Sphere::new(1.0))),
         MeshMaterial3d(standard_materials.add(Color::srgb_u8(24, 144, 255))),
     ));
+}
+
+fn water_material(asset_server: &AssetServer) -> StandardMaterial {
+    let linear = |settings: &mut ImageLoaderSettings| settings.is_srgb = false;
+
+    let base_color: Handle<Image> = asset_server.load("output/water/base_color.png");
+    let normal: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/water/normal.png");
+    let orm: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/water/orm.png");
+    let emissive: Handle<Image> = asset_server.load("output/water/emissive.png");
+    let transmission: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/water/transmission.png");
+    let specular: Handle<Image> = asset_server.load("output/water/specular.png");
+    let clearcoat: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/water/clearcoat.png");
+    let clearcoat_normal: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/water/clearcoat_normal.png");
+    let anisotropy: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/water/anisotropy.png");
+    let depth: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/water/depth.png");
+    let material = StandardMaterial {
+        base_color_texture: Some(base_color.clone()),
+        normal_map_texture: Some(normal.clone()),
+        occlusion_texture: Some(orm.clone()),
+        metallic_roughness_texture: Some(orm.clone()),
+        emissive_texture: Some(emissive.clone()),
+        specular_transmission_texture: Some(transmission.clone()),
+        thickness_texture: Some(transmission.clone()),
+        diffuse_transmission_texture: Some(transmission.clone()),
+        specular_tint_texture: Some(specular.clone()),
+        specular_texture: Some(specular.clone()),
+        clearcoat_texture: Some(clearcoat.clone()),
+        clearcoat_roughness_texture: Some(clearcoat.clone()),
+        clearcoat_normal_texture: Some(clearcoat_normal.clone()),
+        anisotropy_texture: Some(anisotropy.clone()),
+        depth_map: Some(depth.clone()),
+        emissive: LinearRgba::WHITE,
+        perceptual_roughness: 1.0,
+        metallic: 1.0,
+        reflectance: 1.0,
+        clearcoat: 1.0,
+        clearcoat_perceptual_roughness: 1.0,
+        anisotropy_strength: 1.0,
+        specular_transmission: 1.0,
+        diffuse_transmission: 1.0,
+        thickness: 1.0,
+        ..default()
+    };
+    material
+}
+
+fn land_material(asset_server: &AssetServer) -> StandardMaterial {
+    let linear = |settings: &mut ImageLoaderSettings| settings.is_srgb = false;
+
+    let base_color: Handle<Image> = asset_server.load("output/combined/base_color.png");
+    let normal: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/combined/normal.png");
+    let orm: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/combined/orm.png");
+    let emissive: Handle<Image> = asset_server.load("output/combined/emissive.png");
+    let transmission: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/combined/transmission.png");
+    let specular: Handle<Image> = asset_server.load("output/combined/specular.png");
+    let clearcoat: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/combined/clearcoat.png");
+    let clearcoat_normal: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/combined/clearcoat_normal.png");
+    let anisotropy: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/combined/anisotropy.png");
+    let depth: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(linear)
+        .load("output/combined/depth.png");
+    let material = StandardMaterial {
+        base_color_texture: Some(base_color.clone()),
+        normal_map_texture: Some(normal.clone()),
+        occlusion_texture: Some(orm.clone()),
+        metallic_roughness_texture: Some(orm.clone()),
+        emissive_texture: Some(emissive.clone()),
+        specular_transmission_texture: Some(transmission.clone()),
+        thickness_texture: Some(transmission.clone()),
+        diffuse_transmission_texture: Some(transmission.clone()),
+        specular_tint_texture: Some(specular.clone()),
+        specular_texture: Some(specular.clone()),
+        clearcoat_texture: Some(clearcoat.clone()),
+        clearcoat_roughness_texture: Some(clearcoat.clone()),
+        clearcoat_normal_texture: Some(clearcoat_normal.clone()),
+        anisotropy_texture: Some(anisotropy.clone()),
+        depth_map: Some(depth.clone()),
+        emissive: LinearRgba::WHITE,
+        perceptual_roughness: 1.0,
+        metallic: 1.0,
+        reflectance: 1.0,
+        clearcoat: 1.0,
+        clearcoat_perceptual_roughness: 1.0,
+        anisotropy_strength: 1.0,
+        specular_transmission: 1.0,
+        diffuse_transmission: 1.0,
+        thickness: 1.0,
+        ..default()
+    };
+    material
 }
 
 fn move_boat(

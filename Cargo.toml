@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 avian3d = "0.7"
-bevy = { version = "0.19", features  = ["bevy_feathers", "free_camera", "debug"]}
+bevy = { version = "0.19", features  = ["bevy_feathers", "free_camera", "debug", "pbr_transmission_textures", "pbr_specular_textures", "pbr_multi_layer_material_textures", "pbr_anisotropy_texture"]}
 bevy_sky_gradient = { git = "https://github.com/julianbieber/bevy_sky_gradient.git", rev = "a7619fa3ed17651fd782765e6133a835e7f7cecb" }
 # bevy_sky_gradient = { path = "../bevy_sky_gradient" }
 bytemuck = { version = "1.25.0", features = ["derive"] }
