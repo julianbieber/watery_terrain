@@ -33,6 +33,13 @@ const STEP_SECONDS: f32 = 1.0 / 60.0;
 
 const MAX_STEPS_PER_FRAME: u32 = 4;
 
+/// Water depth in millimetres at or below which a cell counts as dry: it is
+/// not drawn and lifts nothing. The water shader reads it as
+/// `constants::DRY_DEPTH_MM`.
+pub const DRY_DEPTH_MM: u32 = 10;
+
+const DRY_DEPTH: f32 = DRY_DEPTH_MM as f32 / 1000.0;
+
 const WATER_DENSITY_RATIO: f32 = 2.0;
 
 const WATER_DRAG_PER_SECOND: f32 = 2.0;
@@ -101,7 +108,7 @@ pub struct WaterColumn {
 
 fn submerged_fraction(column: &WaterColumn, transform: &Transform, radius: f32) -> f32 {
     let bottom_above_ground = (transform.translation.y - radius) - column.ground;
-    if column.depth <= 0.0 || bottom_above_ground >= column.depth {
+    if column.depth <= DRY_DEPTH || bottom_above_ground >= column.depth {
         return 0.0;
     }
     (column.depth - bottom_above_ground).min(radius * 2.0) / (radius * 2.0)

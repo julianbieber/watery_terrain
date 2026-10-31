@@ -13,6 +13,8 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var base_height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var base_height_sampler: sampler;
 
+const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
+
 struct Column {
     water: f32,
     ground: f32,
@@ -35,7 +37,7 @@ fn surface(texel: vec2i) -> f32 {
 // below the terrain where there is none, so dry ground hides it.
 fn drawn(texel: vec2i) -> f32 {
     let c = column(texel);
-    if c.water == 0.0 {
+    if c.water <= DRY_DEPTH {
         return c.ground - 0.1;
     }
     return c.water + c.ground;
