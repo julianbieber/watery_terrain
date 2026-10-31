@@ -115,32 +115,39 @@ fn spawn_plane_dbg(
         RigidBody::Static,
     ));
 
-    commands.spawn((
+    commands.spawn(floating_sphere(
+        3.0,
+        Vec3::Y * 23.0 + Vec3::X * 19.0,
+        &mut meshes,
+        standard_materials.add(Color::srgb_u8(124, 144, 255)),
+    ));
+    commands.spawn(floating_sphere(
+        1.0,
+        Vec3::Y * 23.0 + Vec3::X * -39.0,
+        &mut meshes,
+        standard_materials.add(Color::srgb_u8(24, 144, 255)),
+    ));
+}
+
+fn floating_sphere(
+    radius: f32,
+    position: Vec3,
+    meshes: &mut Assets<Mesh>,
+    material: Handle<StandardMaterial>,
+) -> impl Bundle {
+    (
         DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * 19.0),
+        Transform::from_translation(position),
         WaterDisplacement {
-            radius: 3.0,
+            radius,
             strength: 1.0,
         },
-        Collider::sphere(3.0),
+        Collider::sphere(radius),
         RigidBody::Dynamic,
         GravityScale(1.0),
-        Mesh3d(meshes.add(Sphere::new(5.0))),
-        MeshMaterial3d(standard_materials.add(Color::srgb_u8(124, 144, 255))),
-    ));
-    commands.spawn((
-        DespawnOnExit(Screen::Gameplay),
-        Transform::from_translation(Vec3::Y * 23.0 + Vec3::X * -39.0),
-        WaterDisplacement {
-            radius: 1.0,
-            strength: 1.0,
-        },
-        Collider::sphere(1.0),
-        RigidBody::Dynamic,
-        GravityScale(1.0),
-        Mesh3d(meshes.add(Sphere::new(1.0))),
-        MeshMaterial3d(standard_materials.add(Color::srgb_u8(24, 144, 255))),
-    ));
+        Mesh3d(meshes.add(Sphere::new(radius))),
+        MeshMaterial3d(material),
+    )
 }
 
 fn water_material(asset_server: &AssetServer) -> StandardMaterial {
