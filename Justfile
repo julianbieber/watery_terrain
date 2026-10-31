@@ -95,6 +95,8 @@ wesl-deps:
 	(constants / "package.wesl").write_text("\n".join(
 	    f"const {name}: u32 = {value};" for name, value in [
 	        ("MATERIAL_BIND_GROUP", 3),
+        ("CELLS_PER_METER", 10),
+        ("WORKGROUP_SIZE", 8),
 	        ("SORTED_FRAGMENT_MAX_COUNT", 128),
 	        ("SCREEN_SPACE_SPECULAR_TRANSMISSION_BLUR_TAPS", 128),
 	        ("MAX_DIRECTIONAL_LIGHTS", 128),

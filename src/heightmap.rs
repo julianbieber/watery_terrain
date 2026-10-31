@@ -5,15 +5,18 @@ use bevy::{
     asset::RenderAssetUsages,
     ecs::component::Component,
     image::Image,
-    math::{Mat3, Vec2, Vec3, Vec3Swizzles},
+    math::{Mat3, UVec2, Vec2, Vec3, Vec3Swizzles},
     render::render_resource::{Extent3d, TextureUsages},
+    transform::components::Transform,
 };
+
+use crate::grid::{CELL_SIZE, DIM, corner_of};
 
 pub fn create_water_heightmap() -> Heightmap {
     let mut m = Heightmap::zero();
 
-    for y in 0..Heightmap::DIM {
-        for x in 0..Heightmap::DIM {
+    for y in 0..DIM {
+        for x in 0..DIM {
             m.set(x, y, 0.2);
         }
     }
@@ -25,8 +28,8 @@ pub fn create_terrain_heightmap() -> Heightmap {
     let mut min = 100000.0;
     let mut max = -10000.0;
 
-    for y in 0..Heightmap::DIM {
-        for x in 0..Heightmap::DIM {
+    for y in 0..DIM {
+        for x in 0..DIM {
             let v = Vec2::new(x as f32 * 0.03, y as f32 * 0.03);
             let h: f32 = (mountain_noise(Vec3::new(v.x, v.y, 1.0) * 0.1)).abs() * 5.0
                 + 0.01
@@ -49,7 +52,7 @@ pub fn create_terrain_heightmap() -> Heightmap {
 pub fn create_heightmap_spike() -> Heightmap {
     let mut m = Heightmap::zero();
 
-    m.set(1024, 1024, 5.0);
+    m.set(DIM / 2, DIM / 2, 5.0);
 
     m
 }
@@ -60,18 +63,17 @@ pub struct Heightmap {
 }
 
 impl Heightmap {
-    pub const DIM: u32 = 128 * 32;
     fn zero() -> Heightmap {
         Heightmap {
-            values: vec![0.0; (Self::DIM * Self::DIM) as usize],
+            values: vec![0.0; (DIM * DIM) as usize],
         }
     }
     pub fn image(&self) -> Image {
         let data: Vec<u8> = self.values.iter().flat_map(|v| v.to_le_bytes()).collect();
         let mut image = Image::new(
             Extent3d {
-                width: Self::DIM,
-                height: Self::DIM,
+                width: DIM,
+                height: DIM,
                 depth_or_array_layers: 1,
             },
             bevy::render::render_resource::TextureDimension::D2,
@@ -86,38 +88,46 @@ impl Heightmap {
 
     #[allow(dead_code)]
     pub fn get(&self, x: u32, y: u32) -> f32 {
-        assert!(x < Self::DIM);
-        assert!(y < Self::DIM);
+        assert!(x < DIM);
+        assert!(y < DIM);
 
-        let index = x as usize * (Self::DIM as usize) + y as usize;
+        let index = x as usize * (DIM as usize) + y as usize;
 
-        assert!(index < (Self::DIM * Self::DIM) as usize);
+        assert!(index < (DIM * DIM) as usize);
 
         self.values[index]
     }
 
     pub fn set(&mut self, x: u32, y: u32, h: f32) {
-        assert!(x < Self::DIM);
-        assert!(y < Self::DIM);
+        assert!(x < DIM);
+        assert!(y < DIM);
 
-        let index = x as usize * (Self::DIM as usize) + y as usize;
+        let index = x as usize * (DIM as usize) + y as usize;
 
-        assert!(index < (Self::DIM * Self::DIM) as usize);
+        assert!(index < (DIM * DIM) as usize);
 
         self.values[index] = h;
     }
 
-    pub fn avian(&self) -> Collider {
-        let mut h = Vec::with_capacity(Self::DIM as usize);
-        for z in 0..Self::DIM {
-            let mut row = Vec::with_capacity(Self::DIM as usize);
-            for x in 0..Self::DIM {
+    /// A static heightfield collider and the transform that puts each of its
+    /// samples where the shaders draw the same texel.
+    pub fn avian(&self) -> (Collider, Transform) {
+        let mut h = Vec::with_capacity(DIM as usize);
+        for z in 0..DIM {
+            let mut row = Vec::with_capacity(DIM as usize);
+            for x in 0..DIM {
                 let height = self.get(x, z);
                 row.push(height);
             }
             h.push(row);
         }
-        Collider::heightfield(h, Vec3::new(2048.0 / 10.0, 1.0, 2048.0 / 10.0))
+        let span = (DIM - 1) as f32 * CELL_SIZE;
+        let first = corner_of(UVec2::ZERO);
+        let center = first + Vec2::splat(span / 2.0);
+        (
+            Collider::heightfield(h, Vec3::new(span, 1.0, span)),
+            Transform::from_xyz(center.x, 0.0, center.y),
+        )
     }
 }
 

@@ -13,9 +13,12 @@ use bevy_sky_gradient::{
     sun::{SunDriverPlugin, SunSettings},
 };
 
-use crate::{render::TerrainRanderPlugin, screens::ScreenPlugin, water_sim::WaterSimPlugin};
+use crate::{
+    grid::GridPlugin, render::TerrainRanderPlugin, screens::ScreenPlugin, water_sim::WaterSimPlugin,
+};
 
 mod gameplay;
+mod grid;
 mod heightmap;
 mod main_screen;
 mod render;
@@ -76,6 +79,7 @@ fn main() -> AppExit {
             sky_plugin,
             FeathersPlugins,
             ScreenPlugin,
+            GridPlugin,
             WaterSimPlugin,
             TerrainRanderPlugin,
         ))
