@@ -29,18 +29,24 @@ fn wrap(x: f32) -> f32 {
 }
 
 
+// Upper edges of the sand, grass and rock bands in metres; snow lies above.
+// They sit near the quartiles of the generated terrain's heights, so each
+// material covers about a quarter of it.
+const BAND_TOPS = vec3f(4.0, 7.5, 12.0);
+
+// The atlas column (u range) of the material at height `h`, in the order of
+// assets/output/combined/atlas.json.
 fn height_uv_range(h: f32) -> vec2f {
-    if h < 0.0 {
+    if h < BAND_TOPS.x {
         return vec2f(0.0, 0.25);
     }
-    if h < 2.25 {
+    if h < BAND_TOPS.y {
         return vec2f(0.25, 0.5);
     }
-    if h < 4.35 {
+    if h < BAND_TOPS.z {
         return vec2f(0.5, 0.75);
     }
     return vec2f(0.75, 1.0);
-
 }
 
 // A clipmap vertex moved onto the terrain surface. `height` is the sampled
