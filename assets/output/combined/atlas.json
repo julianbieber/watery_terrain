@@ -5,9 +5,9 @@
   "width": 8192,
   "height": 2048,
   "materials": [
-    { "name": "grass", "u_min": 0, "u_max": 0.25, "v_min": 0, "v_max": 1 },
-    { "name": "rock", "u_min": 0.25, "u_max": 0.5, "v_min": 0, "v_max": 1 },
-    { "name": "sand", "u_min": 0.5, "u_max": 0.75, "v_min": 0, "v_max": 1 },
+    { "name": "sand", "u_min": 0, "u_max": 0.25, "v_min": 0, "v_max": 1 },
+    { "name": "grass", "u_min": 0.25, "u_max": 0.5, "v_min": 0, "v_max": 1 },
+    { "name": "rock", "u_min": 0.5, "u_max": 0.75, "v_min": 0, "v_max": 1 },
     { "name": "snow", "u_min": 0.75, "u_max": 1, "v_min": 0, "v_max": 1 }
   ]
 }

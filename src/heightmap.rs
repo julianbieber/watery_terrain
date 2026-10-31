@@ -14,10 +14,7 @@ pub fn create_water_heightmap() -> Heightmap {
 
     for y in 0..Heightmap::DIM {
         for x in 0..Heightmap::DIM {
-            let v = Vec2::new(x as f32 * 0.03, y as f32 * 0.03);
-            let scope = mountain_noise(Vec3::new(v.y * 0.1, v.x * 0.1, 100.0));
-            let h: f32 = mountain_noise(Vec3::new(v.x, v.y, 1.0)) * scope;
-            m.set(x, y, h.abs());
+            m.set(x, y, 0.2);
         }
     }
     m
@@ -25,6 +22,8 @@ pub fn create_water_heightmap() -> Heightmap {
 
 pub fn create_terrain_heightmap() -> Heightmap {
     let mut m = Heightmap::zero();
+    let mut min = 100000.0;
+    let mut max = -10000.0;
 
     for y in 0..Heightmap::DIM {
         for x in 0..Heightmap::DIM {
@@ -33,9 +32,16 @@ pub fn create_terrain_heightmap() -> Heightmap {
                 + 0.01
                 + value_noise(Vec2::new(v.x, v.y) * 0.1) * 1.2
                 + voronoise(Vec2::new(v.x, v.y) * 0.1, 0.2, 0.2) * 1.0;
+            if h > max {
+                max = h;
+            }
+            if h < min {
+                min = h;
+            }
             m.set(x, y, h.abs() * 3.0);
         }
     }
+    dbg!(min, max);
     m
 }
 

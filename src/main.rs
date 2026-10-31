@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use bevy::{
     feathers::{FeathersPlugins, palette::WHITE},
     prelude::*,

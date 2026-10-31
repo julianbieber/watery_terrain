@@ -16,6 +16,8 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var height_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var height_sampler: sampler;
 
+const TERRAIN_UV_REPEAT: f32 = 40.0;
+
 fn get_height(vertex_position_world: vec2f) -> vec4f {
     let uv = vec2i(floor((vertex_position_world + vec2f(1024.0))));
     let h: f32 = textureLoad(height_texture, uv, 0).r;
@@ -33,8 +35,23 @@ fn get_height(vertex_position_world: vec2f) -> vec4f {
     return vec4f(h, normalize(n));
 }
 
-fn wrap(x: vec2f) -> vec2f {
+fn wrap(x: f32) -> f32 {
     return fract(x + ceil(abs(x)));
+}
+
+
+fn height_uv_range(h: f32) -> vec2f {
+    if h < 0.0 {
+        return vec2f(0.0, 0.25);
+    }
+    if h < 2.25 {
+        return vec2f(0.25, 0.5);
+    }
+    if h < 4.35 {
+        return vec2f(0.5, 0.75);
+    }
+    return vec2f(0.75, 1.0);
+    
 }
 
 @vertex
@@ -61,7 +78,9 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
 
     out.position = position_world_to_clip(out.world_position.xyz);
 
-    out.uv = wrap(((out.world_position.xz+1024.0)/2048.0));
+    let tiled_uv = ((out.world_position.xz+1024.0)/2048.0) * TERRAIN_UV_REPEAT;
+    let u_range = height_uv_range(height.x);
+    out.uv = vec2f(mix(u_range.x, u_range.y, wrap(tiled_uv.x)), tiled_uv.y);
 
     return out;
 }

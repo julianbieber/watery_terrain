@@ -5,7 +5,7 @@ use avian3d::{
 use bevy::{
     camera::Exposure,
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
-    image::ImageLoaderSettings,
+    image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     pbr::ExtendedMaterial,
     prelude::*,
 };
@@ -144,9 +144,22 @@ fn spawn_plane_dbg(
 }
 
 fn water_material(asset_server: &AssetServer) -> StandardMaterial {
-    let linear = |settings: &mut ImageLoaderSettings| settings.is_srgb = false;
+    let repeat = |settings: &mut ImageLoaderSettings| {
+        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            ..ImageSamplerDescriptor::linear()
+        })
+    };
+    let linear = move |settings: &mut ImageLoaderSettings| {
+        repeat(settings);
+        settings.is_srgb = false;
+    };
 
-    let base_color: Handle<Image> = asset_server.load("output/water/base_color.png");
+    let base_color: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(repeat)
+        .load("output/water/base_color.png");
     let normal: Handle<Image> = asset_server
         .load_builder()
         .with_settings(linear)
@@ -155,12 +168,18 @@ fn water_material(asset_server: &AssetServer) -> StandardMaterial {
         .load_builder()
         .with_settings(linear)
         .load("output/water/orm.png");
-    let emissive: Handle<Image> = asset_server.load("output/water/emissive.png");
+    let emissive: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(repeat)
+        .load("output/water/emissive.png");
     let transmission: Handle<Image> = asset_server
         .load_builder()
         .with_settings(linear)
         .load("output/water/transmission.png");
-    let specular: Handle<Image> = asset_server.load("output/water/specular.png");
+    let specular: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(repeat)
+        .load("output/water/specular.png");
     let clearcoat: Handle<Image> = asset_server
         .load_builder()
         .with_settings(linear)
@@ -209,9 +228,21 @@ fn water_material(asset_server: &AssetServer) -> StandardMaterial {
 }
 
 fn land_material(asset_server: &AssetServer) -> StandardMaterial {
-    let linear = |settings: &mut ImageLoaderSettings| settings.is_srgb = false;
+    let repeat_v = |settings: &mut ImageLoaderSettings| {
+        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_v: ImageAddressMode::Repeat,
+            ..ImageSamplerDescriptor::linear()
+        })
+    };
+    let linear = move |settings: &mut ImageLoaderSettings| {
+        repeat_v(settings);
+        settings.is_srgb = false;
+    };
 
-    let base_color: Handle<Image> = asset_server.load("output/combined/base_color.png");
+    let base_color: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(repeat_v)
+        .load("output/combined/base_color.png");
     let normal: Handle<Image> = asset_server
         .load_builder()
         .with_settings(linear)
@@ -220,12 +251,18 @@ fn land_material(asset_server: &AssetServer) -> StandardMaterial {
         .load_builder()
         .with_settings(linear)
         .load("output/combined/orm.png");
-    let emissive: Handle<Image> = asset_server.load("output/combined/emissive.png");
+    let emissive: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(repeat_v)
+        .load("output/combined/emissive.png");
     let transmission: Handle<Image> = asset_server
         .load_builder()
         .with_settings(linear)
         .load("output/combined/transmission.png");
-    let specular: Handle<Image> = asset_server.load("output/combined/specular.png");
+    let specular: Handle<Image> = asset_server
+        .load_builder()
+        .with_settings(repeat_v)
+        .load("output/combined/specular.png");
     let clearcoat: Handle<Image> = asset_server
         .load_builder()
         .with_settings(linear)
