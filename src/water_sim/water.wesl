@@ -1,14 +1,13 @@
 import package::grid;
 
-@group(0) @binding(0) var input:  texture_storage_2d<r32float, read>;
-@group(0) @binding(1) var output: texture_storage_2d<r32float, write>;
+@group(0) @binding(0) var water: texture_storage_2d<r32float, read_write>;
 
-@group(0) @binding(2) var flow_x: texture_storage_2d<r32float, read_write>;
-@group(0) @binding(3) var flow_y: texture_storage_2d<r32float, read_write>;
+@group(0) @binding(1) var flow_x: texture_storage_2d<r32float, read_write>;
+@group(0) @binding(2) var flow_y: texture_storage_2d<r32float, read_write>;
 
-@group(0) @binding(4) var<storage, read> displacements: array<vec4f>;
+@group(0) @binding(3) var<storage, read> displacements: array<vec4f>;
 
-@group(0) @binding(5) var base_height_texture: texture_storage_2d<r32float, read>;
+@group(0) @binding(4) var base_height_texture: texture_storage_2d<r32float, read>;
 
 
 struct SimParams {
@@ -21,11 +20,11 @@ var<immediate> sim: SimParams;
 
 // returns base and water height separately
 fn get_height(location: vec2i) -> vec2f {
-    return vec2f(textureLoad(base_height_texture, location).x,textureLoad(input, location).x);
+    return vec2f(textureLoad(base_height_texture, location).x,textureLoad(water, location).x);
 }
 
 fn set_height(location: vec2i, v: f32) {
-    textureStore(output, location, vec4f(v, 0.0, 0.0, 0.0));
+    textureStore(water, location, vec4f(v, 0.0, 0.0, 0.0));
 }
 
 fn get_flow_x(edge: vec2i) -> f32 {
@@ -74,11 +73,11 @@ fn distance_from_specific(p: vec2f, i: u32) -> f32 {
 // -------- pass 0: update flows on edges --------
 
 fn update_flows(invocation_id: vec3<u32>) {
-    let size = vec2i(textureDimensions(input)); // (W,H)
+    let size = vec2i(textureDimensions(water)); // (W,H)
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
 
-    let p = grid::world_position(vec2f(f32(x), f32(y)), textureDimensions(input));
+    let p = grid::world_position(vec2f(f32(x), f32(y)), textureDimensions(water));
     let d = distance_from_displacement(p);
     let dampening = 0.118;
     let momentum = 0.99;
@@ -153,7 +152,7 @@ fn update_flows(invocation_id: vec3<u32>) {
 
 fn update_water_height(invocation_id: vec3<u32>) {
     let l = vec2i(invocation_id.xy);
-    let size = vec2i(textureDimensions(input));
+    let size = vec2i(textureDimensions(water));
 
     if (l.x < 0 || l.y < 0 || l.x >= size.x || l.y >= size.y) {
         return;

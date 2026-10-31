@@ -46,8 +46,7 @@ impl Plugin for WaterSimPlugin {
         );
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
-        render_app.add_systems(Render, (prepare_water_bindgroups, update_water_sim).chain());
-        render_app.insert_resource(WaterBindGroupsSwap(true));
+        render_app.add_systems(Render, prepare_water_bindgroups);
         let displacements = StorageBuffer::<Vec<Vec4>>::from(Vec::new());
         render_app.insert_resource(DisplacementBuffer {
             buffer: displacements,
@@ -70,7 +69,7 @@ fn collect_displacements(
     water_height: Res<WaterHeightTexture>,
     textures: Res<Assets<Image>>,
 ) {
-    let water = textures.get(water_height.texture_a.id()).unwrap();
+    let water = textures.get(water_height.water.id()).unwrap();
     let base = textures.get(water_height.base_height.id()).unwrap();
     buffer.buffer.clear();
     for (mut velocity, transform, w) in &mut d {
@@ -98,17 +97,13 @@ struct WaterRenderPipeline {
 }
 
 #[derive(Resource)]
-struct WaterBindGroups([BindGroup; 2]);
-
-#[derive(Resource)]
-struct WaterBindGroupsSwap(bool);
+struct WaterBindGroup(BindGroup);
 
 fn run_water_sim(
     mut render_context: RenderContext,
     pipeline: If<Res<WaterRenderPipeline>>,
     pipeline_cache: If<Res<PipelineCache>>,
-    bind_groups: If<Res<WaterBindGroups>>,
-    swap: If<Res<WaterBindGroupsSwap>>,
+    bind_group: If<Res<WaterBindGroup>>,
 ) {
     let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
         return;
@@ -117,7 +112,7 @@ fn run_water_sim(
         .command_encoder()
         .begin_compute_pass(&ComputePassDescriptor::default());
 
-    pass.set_bind_group(0, &bind_groups.0.0[swap.0.0 as usize], &[]);
+    pass.set_bind_group(0, &bind_group.0.0, &[]);
     pass.set_pipeline(update_pipeline);
 
     pass.set_immediates(
@@ -138,11 +133,6 @@ fn run_water_sim(
         }),
     );
     pass.dispatch_workgroups(workgroups, workgroups, 1);
-}
-
-fn update_water_sim(world: &mut World) {
-    let mut s = world.resource_mut::<WaterBindGroupsSwap>();
-    s.0 = !s.0;
 }
 
 #[repr(C)]
@@ -168,7 +158,6 @@ fn init_internal_textures(
     let material = material.get(trigger.entity).unwrap();
     let material = water_terrain_materials.get(material.0.id()).unwrap();
     let water_height = images.get(material.extension.water.id()).unwrap();
-    let water_height_2 = water_height.clone();
     let mut flow_x = Image::new(
         Extent3d {
             width: water_height.width() + 1,
@@ -199,11 +188,9 @@ fn init_internal_textures(
     flow_y.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST;
     let flow_y = images.add(flow_y);
     let flow_x = images.add(flow_x);
-    let water_height_2 = images.add(water_height_2);
 
     commands.insert_resource(WaterHeightTexture {
-        texture_a: material.extension.water.clone(),
-        texture_b: water_height_2,
+        water: material.extension.water.clone(),
         flow_x,
         flow_y,
         base_height: material.extension.base.clone(),
@@ -222,11 +209,7 @@ fn init_water_render(
             (
                 texture_storage_2d(
                     bevy::render::render_resource::TextureFormat::R32Float,
-                    bevy::render::render_resource::StorageTextureAccess::ReadOnly,
-                ),
-                texture_storage_2d(
-                    bevy::render::render_resource::TextureFormat::R32Float,
-                    bevy::render::render_resource::StorageTextureAccess::WriteOnly,
+                    bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 texture_storage_2d(
                     bevy::render::render_resource::TextureFormat::R32Float,
@@ -276,44 +259,29 @@ fn prepare_water_bindgroups(
         .buffer
         .write_buffer(&render_device, &render_queue);
 
-    let tex_a = gpu_images.get(&water_images.texture_a).unwrap();
-    let tex_b = gpu_images.get(&water_images.texture_b).unwrap();
+    let water = gpu_images.get(&water_images.water).unwrap();
     let flow_x = gpu_images.get(&water_images.flow_x).unwrap();
     let flow_y = gpu_images.get(&water_images.flow_y).unwrap();
     let base = gpu_images.get(&water_images.base_height).unwrap();
 
-    let bind_group_0 = render_device.create_bind_group(
+    let bind_group = render_device.create_bind_group(
         None,
         &pipeline_cache.get_bind_group_layout(&pipeline.layout),
         &BindGroupEntries::sequential((
-            &tex_a.texture_view,
-            &tex_b.texture_view,
+            &water.texture_view,
             &flow_x.texture_view,
             &flow_y.texture_view,
             displacement.buffer.binding().unwrap(),
             &base.texture_view,
         )),
     );
-    let bind_group_1 = render_device.create_bind_group(
-        None,
-        &pipeline_cache.get_bind_group_layout(&pipeline.layout),
-        &BindGroupEntries::sequential((
-            &tex_b.texture_view,
-            &tex_a.texture_view,
-            &flow_x.texture_view,
-            &flow_y.texture_view,
-            displacement.buffer.binding().unwrap(),
-            &base.texture_view,
-        )),
-    );
-    commands.insert_resource(WaterBindGroups([bind_group_0, bind_group_1]));
+    commands.insert_resource(WaterBindGroup(bind_group));
 }
 
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct WaterHeightTexture {
-    pub texture_a: Handle<Image>,
-    pub texture_b: Handle<Image>,
+    pub water: Handle<Image>,
     pub flow_x: Handle<Image>,
     pub flow_y: Handle<Image>,
     pub base_height: Handle<Image>,
