@@ -29,6 +29,10 @@ use crate::{
 
 const WORKGROUP_SIZE: u32 = 8;
 
+const STEP_SECONDS: f32 = 1.0 / 60.0;
+
+const MAX_STEPS_PER_FRAME: u32 = 4;
+
 pub struct WaterSimPlugin;
 
 #[derive(Component)]
@@ -39,6 +43,9 @@ impl Plugin for WaterSimPlugin {
         embedded_asset!(app, "water.wesl");
         app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
         app.add_plugins(ExtractResourcePlugin::<DisplacementBufferMain>::default());
+        app.add_plugins(ExtractResourcePlugin::<WaterSimSteps>::default());
+        app.init_resource::<WaterSimSteps>();
+        app.add_systems(Update, count_sim_steps);
         app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
         app.add_systems(
             Update,
@@ -99,11 +106,26 @@ struct WaterRenderPipeline {
 #[derive(Resource)]
 struct WaterBindGroup(BindGroup);
 
+#[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(RenderApp)]
+struct WaterSimSteps {
+    due: u32,
+    unsimulated_seconds: f32,
+}
+
+fn count_sim_steps(time: Res<Time>, mut steps: ResMut<WaterSimSteps>) {
+    let elapsed = steps.unsimulated_seconds + time.delta_secs();
+    let due = ((elapsed / STEP_SECONDS) as u32).min(MAX_STEPS_PER_FRAME);
+    steps.due = due;
+    steps.unsimulated_seconds = (elapsed - due as f32 * STEP_SECONDS).min(STEP_SECONDS);
+}
+
 fn run_water_sim(
     mut render_context: RenderContext,
     pipeline: If<Res<WaterRenderPipeline>>,
     pipeline_cache: If<Res<PipelineCache>>,
     bind_group: If<Res<WaterBindGroup>>,
+    steps: If<Res<WaterSimSteps>>,
 ) {
     let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
         return;
@@ -115,24 +137,19 @@ fn run_water_sim(
     pass.set_bind_group(0, &bind_group.0.0, &[]);
     pass.set_pipeline(update_pipeline);
 
-    pass.set_immediates(
-        0,
-        bytemuck::bytes_of(&SimParams {
-            id: 0,
-            _pad: Vec3::ZERO,
-        }),
-    );
     let workgroups = (DIM + 1).div_ceil(WORKGROUP_SIZE);
-    pass.dispatch_workgroups(workgroups, workgroups, 1);
-
-    pass.set_immediates(
-        0,
-        bytemuck::bytes_of(&SimParams {
-            id: 1,
-            _pad: Vec3::ZERO,
-        }),
-    );
-    pass.dispatch_workgroups(workgroups, workgroups, 1);
+    for _ in 0..steps.0.due {
+        for id in [0, 1] {
+            pass.set_immediates(
+                0,
+                bytemuck::bytes_of(&SimParams {
+                    id,
+                    _pad: Vec3::ZERO,
+                }),
+            );
+            pass.dispatch_workgroups(workgroups, workgroups, 1);
+        }
+    }
 }
 
 #[repr(C)]
