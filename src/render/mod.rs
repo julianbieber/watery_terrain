@@ -12,8 +12,8 @@ pub struct TerrainRanderPlugin;
 
 impl Plugin for TerrainRanderPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "terrain.wgsl");
-        embedded_asset!(app, "water.wgsl");
+        embedded_asset!(app, "terrain.wesl");
+        embedded_asset!(app, "water.wesl");
 
         app.add_plugins(MaterialPlugin::<
             ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>,

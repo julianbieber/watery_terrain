@@ -1,20 +1,16 @@
-#import bevy_pbr::mesh_functions
-#import bevy_pbr::pbr_fragment::pbr_input_from_standard_material
-#import bevy_pbr::view_transformations::position_world_to_clip
+import bevy_pbr::render::{
+    mesh_functions,
+    view_transformations::position_world_to_clip,
+};
 
-#ifdef MESHLET_MESH_MATERIAL_PASS
-#import bevy_pbr::meshlet_visibility_buffer_resolve::VertexOutput
-#else ifdef PREPASS_PIPELINE
-#import bevy_pbr::prepass_io::{Vertex, VertexOutput, FragmentOutput}
-#import bevy_pbr::pbr_deferred_functions::deferred_output;
-#else   // PREPASS_PIPELINE
-#import bevy_pbr::forward_io::{Vertex, VertexOutput, FragmentOutput}
-#import bevy_pbr::pbr_functions::main_pass_post_lighting_processing
-#endif  // PREPASS_PIPELINE
+@if(PREPASS_PIPELINE)
+import bevy_pbr::prepass::io::{Vertex, VertexOutput};
+@else
+import bevy_pbr::render::forward_io::{Vertex, VertexOutput};
 
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var height_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var height_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var height_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var height_sampler: sampler;
 
 const TERRAIN_UV_REPEAT: f32 = 40.0;
 
@@ -63,18 +59,18 @@ fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
     let height = get_height(out.world_position.xz * 10.0);
     out.world_position.y = height.x;
 
-    #ifdef MESHLET_MESH_MATERIAL_PASS
-    #else ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
+    @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
         out.world_normal = height.yzw;
-    #else ifdef PREPASS_PIPELINE
-    #else
+    } @elif(!PREPASS_PIPELINE) {
         out.world_normal = height.yzw;
-        if abs(dot(height.xzw, vec3(0,1,0))) < 0.899 {
-            out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0)*0.11;
-        } else {
-            out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0)*0.11; // fallback for near-vertical normals
+        @if(VERTEX_TANGENTS) {
+            if abs(dot(height.xzw, vec3(0,1,0))) < 0.899 {
+                out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0)*0.11;
+            } else {
+                out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0)*0.11; // fallback for near-vertical normals
+            }
         }
-    #endif
+    }
 
     out.position = position_world_to_clip(out.world_position.xyz);
 

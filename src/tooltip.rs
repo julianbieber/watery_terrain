@@ -6,12 +6,14 @@ use bevy::{
     feathers::{
         constants::fonts,
         controls::FeathersButtonProps,
-        cursor::EntityCursor,
         dark_theme::create_dark_theme,
         font_styles::InheritableFont,
-        theme::{ThemeBackgroundColor, ThemeBorderColor, ThemeToken, UiTheme},
+        theme::{
+            SemanticToken, ThemeBackgroundColor, ThemeBorderColor, ThemeProps, ThemeToken, UiTheme,
+        },
     },
     input_focus::tab_navigation::TabIndex,
+    picking::cursor::EntityCursor,
     prelude::*,
     ui_widgets::{Activate, observe},
     window::PrimaryWindow,
@@ -41,18 +43,30 @@ pub struct Tooltip {
 
 pub struct TooltipPlugin;
 
+fn assign_color(theme: &mut ThemeProps, token: ThemeToken, color: Color) {
+    let semantic = SemanticToken::new(token.to_string().into());
+    theme.token_assignments.insert(token, semantic.clone());
+    theme.semantic_base.insert(semantic, color);
+}
+
 impl Plugin for TooltipPlugin {
     fn build(&self, app: &mut App) {
         let mut theme = create_dark_theme();
-        theme
-            .color
-            .insert(TOOLTIP_CLICKABLE_BG, Color::oklcha(0.02, 0.4, 385.0, 1.0));
-        theme
-            .color
-            .insert(TOOLTIP_CLICKABLE_TEXT, Color::oklcha(0.62, 0.5, 385.0, 1.0));
-        theme
-            .color
-            .insert(TOOLTIP_BORDER, Color::oklcha(0.62, -0.5, 185.0, 1.0));
+        assign_color(
+            &mut theme,
+            TOOLTIP_CLICKABLE_BG,
+            Color::oklcha(0.02, 0.4, 385.0, 1.0),
+        );
+        assign_color(
+            &mut theme,
+            TOOLTIP_CLICKABLE_TEXT,
+            Color::oklcha(0.62, 0.5, 385.0, 1.0),
+        );
+        assign_color(
+            &mut theme,
+            TOOLTIP_BORDER,
+            Color::oklcha(0.62, -0.5, 185.0, 1.0),
+        );
 
         let mut tooltips = HashMap::new();
         tooltips.insert(

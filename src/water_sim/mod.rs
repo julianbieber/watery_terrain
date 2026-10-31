@@ -29,7 +29,7 @@ pub struct WaterMarker;
 
 impl Plugin for WaterSimPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "water.wgsl");
+        embedded_asset!(app, "water.wesl");
         app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
         app.add_plugins(ExtractResourcePlugin::<DisplacementBufferMain>::default());
         app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
@@ -103,13 +103,13 @@ fn run_water_sim(
     bind_groups: If<Res<WaterBindGroups>>,
     swap: If<Res<WaterBindGroupsSwap>>,
 ) {
+    let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
+        return;
+    };
     let mut pass = render_context
         .command_encoder()
         .begin_compute_pass(&ComputePassDescriptor::default());
 
-    let update_pipeline = pipeline_cache
-        .get_compute_pipeline(pipeline.pipeline)
-        .unwrap();
     pass.set_bind_group(0, &bind_groups.0.0[swap.0.0 as usize], &[]);
     pass.set_pipeline(update_pipeline);
 
@@ -146,11 +146,10 @@ struct SimParams {
 
 fn init_internal_textures(
     trigger: On<
-        Add,
-        (
+        Add<(
             // MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>,
             WaterMarker,
-        ),
+        )>,
     >,
     mut commands: Commands,
     material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
@@ -238,7 +237,7 @@ fn init_water_render(
         ),
     );
     let shader: Handle<Shader> = asset_server
-        .load(AssetPath::from_path_buf(embedded_path!("water.wgsl")).with_source("embedded"));
+        .load(AssetPath::from_path_buf(embedded_path!("water.wesl")).with_source("embedded"));
     let update_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         layout: vec![texture_bind_group_layout.clone()],
         shader,
@@ -302,6 +301,7 @@ fn prepare_water_bindgroups(
 }
 
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
 pub struct WaterHeightTexture {
     pub texture_a: Handle<Image>,
     pub texture_b: Handle<Image>,
@@ -325,6 +325,7 @@ pub fn height_from_texture(t: &Image, world: Vec2) -> f32 {
 }
 
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
 struct DisplacementBufferMain {
     buffer: Vec<Vec4>,
 }
