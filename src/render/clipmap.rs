@@ -360,7 +360,7 @@ pub struct WaterTerrainMaterial {
 impl MaterialExtension for WaterTerrainMaterial {
     fn vertex_shader() -> bevy::shader::ShaderRef {
         ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("water.wgsl")).with_source("embedded"),
+            AssetPath::from_path_buf(embedded_path!("water_forward.wesl")).with_source("embedded"),
         )
     }
 
@@ -374,13 +374,13 @@ impl MaterialExtension for WaterTerrainMaterial {
 
     fn prepass_vertex_shader() -> bevy::shader::ShaderRef {
         ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("water.wgsl")).with_source("embedded"),
+            AssetPath::from_path_buf(embedded_path!("water_prepass.wesl")).with_source("embedded"),
         )
     }
 
     fn deferred_vertex_shader() -> bevy::shader::ShaderRef {
         ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("water.wgsl")).with_source("embedded"),
+            AssetPath::from_path_buf(embedded_path!("water_prepass.wesl")).with_source("embedded"),
         )
     }
 
@@ -406,7 +406,8 @@ pub struct TerrainMaterial {
 impl MaterialExtension for TerrainMaterial {
     fn vertex_shader() -> bevy::shader::ShaderRef {
         ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("terrain.wgsl")).with_source("embedded"),
+            AssetPath::from_path_buf(embedded_path!("terrain_forward.wesl"))
+                .with_source("embedded"),
         )
     }
 
@@ -420,13 +421,15 @@ impl MaterialExtension for TerrainMaterial {
 
     fn prepass_vertex_shader() -> bevy::shader::ShaderRef {
         ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("terrain.wgsl")).with_source("embedded"),
+            AssetPath::from_path_buf(embedded_path!("terrain_prepass.wesl"))
+                .with_source("embedded"),
         )
     }
 
     fn deferred_vertex_shader() -> bevy::shader::ShaderRef {
         ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("terrain.wgsl")).with_source("embedded"),
+            AssetPath::from_path_buf(embedded_path!("terrain_prepass.wesl"))
+                .with_source("embedded"),
         )
     }
 

@@ -48,27 +48,23 @@ fn main_root() -> impl Scene {
         }
         ThemeBackgroundColor(tokens::WINDOW_BG)
         Children[
-            (
-                @FeathersButton{
-                    @caption: bsn! {Text("Play!") ThemedText}
-                }
-                on(go_to_play)
-                AutoFocus
-            ),
-            (
-                @FeathersButton{
-                    @caption: bsn! {Text("Help") ThemedText}
-                }
-                on(go_to_help)
-                AutoFocus
-            ),
-            (
-                @FeathersButton{
-                    @caption: bsn! {Text("Quit") ThemedText}
-                }
-                on(quit)
-                AutoFocus
-            )
+            @FeathersButton{
+                @caption: bsn! {Text("Play!") ThemedText}
+            }
+            on(go_to_play)
+            AutoFocus
+            --
+            @FeathersButton{
+                @caption: bsn! {Text("Help") ThemedText}
+            }
+            on(go_to_help)
+            AutoFocus
+            --
+            @FeathersButton{
+                @caption: bsn! {Text("Quit") ThemedText}
+            }
+            on(quit)
+            AutoFocus
         ]
     }
 }
