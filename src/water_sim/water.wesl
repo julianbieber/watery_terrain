@@ -93,8 +93,6 @@ fn update_flows(invocation_id: vec3<u32>) {
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
 
-    let p = grid::world_position(vec2f(f32(x), f32(y)), textureDimensions(water));
-    let d = distance_from_displacement(p);
     let acceleration = 0.118;
     let damping = 0.99;
 
@@ -119,7 +117,8 @@ fn update_flows(invocation_id: vec3<u32>) {
                 dh = min(dh, hL.y);
             }
             f = f * damping + dh * acceleration;
-            f += displacement_push(d, p, vec2f(1.0, 0.0));
+            let edge_center = grid::world_position(vec2f(f32(ex), f32(ey) + 0.5), vec2u(size));
+            f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(1.0, 0.0));
 
             set_flow_x(vec2i(ex, ey), f);
         }
@@ -146,7 +145,8 @@ fn update_flows(invocation_id: vec3<u32>) {
                 dh = min(dh, hD.y);
             }
             f = f * damping + dh * acceleration;
-            f += displacement_push(d, p, vec2f(0.0, 1.0));
+            let edge_center = grid::world_position(vec2f(f32(ex) + 0.5, f32(ey)), vec2u(size));
+            f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(0.0, 1.0));
             set_flow_y(vec2i(ex, ey), f);
         }
     }
