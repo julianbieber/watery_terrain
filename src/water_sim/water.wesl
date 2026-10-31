@@ -65,6 +65,22 @@ fn distance_from_displacement(p: vec2f) -> DisplacementResult {
     return DisplacementResult(m, current_min);
 }
 
+// Flow that the nearest displacement circle `d` pushes through point `p`
+// along `axis`: radially outward inside the circle, nothing outside it or at
+// its exact centre, where the outward direction is undefined.
+fn displacement_push(d: DisplacementResult, p: vec2f, axis: vec2f) -> f32 {
+    if d.index < 0 || d.distance >= 0.0 {
+        return 0.0;
+    }
+    let circle = displacements[d.index];
+    let offset = p - circle.xy;
+    let offset_length = length(offset);
+    if offset_length == 0.0 {
+        return 0.0;
+    }
+    return dot(offset / offset_length, axis) * circle.w;
+}
+
 fn distance_from_specific(p: vec2f, i: u32) -> f32 {
     let c = displacements[i];
     let d = length(c.xy - p)-c.z;
@@ -103,13 +119,7 @@ fn update_flows(invocation_id: vec3<u32>) {
                 dh = min(dh, hL.y);
             }
             f = f * damping + dh * acceleration;
-            if d.index >= 0 && d.distance < 0.0 {
-                let displacement_circle = displacements[d.index];
-                // if p.x != displacement_circle.x || p.y != displacement_circle.y {
-                    let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(1.0, 0.0)) * displacement_circle.w;
-                // }
-            }
+            f += displacement_push(d, p, vec2f(1.0, 0.0));
 
             set_flow_x(vec2i(ex, ey), f);
         }
@@ -136,13 +146,7 @@ fn update_flows(invocation_id: vec3<u32>) {
                 dh = min(dh, hD.y);
             }
             f = f * damping + dh * acceleration;
-            if d.index >= 0 && d.distance < 0.0 {
-                let displacement_circle = displacements[d.index];
-                // if p.x != displacement_circle.x || p.y != displacement_circle.y {
-                    let dir = normalize(p - displacement_circle.xy);
-                    f += dot(dir, vec2f(0.0, 1.0)) * displacement_circle.w;
-                // }
-            }
+            f += displacement_push(d, p, vec2f(0.0, 1.0));
             set_flow_y(vec2i(ex, ey), f);
         }
     }
