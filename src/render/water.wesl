@@ -91,10 +91,3 @@ fn displace(instance_index: u32, local_position: vec3f) -> Displaced {
 
     return Displaced(world_position, position_world_to_clip(world_position.xyz), height, uv);
 }
-
-fn world_tangent(normal: vec3f) -> vec4f {
-    if abs(dot(normal, vec3(0,1,0))) < 0.899 {
-        return vec4(normalize(cross(vec3(0,1,0), normal)), 1.0)*0.11;
-    }
-    return vec4(normalize(cross(vec3(1,0,0), normal)), 1.0)*0.11;
-}
