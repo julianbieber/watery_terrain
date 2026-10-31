@@ -4,14 +4,14 @@ use bevy::{
     pbr::ExtendedMaterial,
     prelude::*,
     render::{
-        Render, RenderApp, RenderStartup,
+        Render, RenderApp, RenderStartup, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
-            PipelineCache, ShaderStages, StorageBuffer, TextureDimension, TextureFormat,
-            TextureUsages,
+            PipelineCache, ShaderStages, ShaderType, StorageBuffer, TextureDimension,
+            TextureFormat, TextureUsages,
             binding_types::{storage_buffer_read_only, texture_storage_2d},
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
@@ -34,6 +34,8 @@ const STEP_SECONDS: f32 = 1.0 / 60.0;
 
 const MAX_STEPS_PER_FRAME: u32 = 4;
 
+const MAX_DISPLACEMENTS: usize = 64;
+
 pub struct WaterSimPlugin;
 
 #[derive(Component)]
@@ -54,10 +56,15 @@ impl Plugin for WaterSimPlugin {
         );
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
-        render_app.add_systems(Render, prepare_water_bindgroups);
-        let displacements = StorageBuffer::<Vec<Vec4>>::from(Vec::new());
+        render_app.add_systems(
+            Render,
+            prepare_water_bindgroups.in_set(RenderSystems::PrepareBindGroups),
+        );
         render_app.insert_resource(DisplacementBuffer {
-            buffer: displacements,
+            buffer: StorageBuffer::from(Displacements {
+                count: 0,
+                items: [Displacement::default(); MAX_DISPLACEMENTS],
+            }),
         });
         render_app.add_systems(RenderGraph, run_water_sim);
 
@@ -80,19 +87,18 @@ fn collect_displacements(
     let water = textures.get(water_height.water.id()).unwrap();
     let base = textures.get(water_height.base_height.id()).unwrap();
     buffer.buffer.clear();
-    for (mut velocity, transform, w) in &mut d {
+    for (mut velocity, transform, w) in d.iter_mut().take(MAX_DISPLACEMENTS) {
         let h = height_from_texture(water, transform.translation.xz());
         let base_h = height_from_texture(base, transform.translation.xz());
         let t_h = transform.translation.y;
         let relative_to_water = (t_h - w.radius) - base_h;
         if relative_to_water < h && h > 0.0 {
             let in_water = (h - relative_to_water).min(w.radius * 2.0) / (w.radius * 2.0);
-            buffer.buffer.push(Vec4::new(
-                transform.translation.x,
-                transform.translation.z,
-                w.radius,
-                w.strength * in_water,
-            ));
+            buffer.buffer.push(Displacement {
+                center: transform.translation.xz(),
+                radius: w.radius,
+                push: w.strength * in_water,
+            });
             velocity.0.y = in_water * 0.8;
         }
     }
@@ -226,7 +232,7 @@ fn init_water_render(
                     TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
-                storage_buffer_read_only::<Vec<Vec4>>(false),
+                storage_buffer_read_only::<Displacements>(false),
                 texture_storage_2d(
                     TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadOnly,
@@ -244,7 +250,10 @@ fn init_water_render(
         layout: vec![texture_bind_group_layout.clone()],
         shader,
         entry_point: Some(Cow::from("main")),
-        shader_defs: vec![ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE)],
+        shader_defs: vec![
+            ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE),
+            ShaderDefVal::UInt("MAX_DISPLACEMENTS".into(), MAX_DISPLACEMENTS as u32),
+        ],
         immediate_size: std::mem::size_of::<SimParams>() as u32,
         ..Default::default()
     });
@@ -256,6 +265,7 @@ fn init_water_render(
 
 fn prepare_water_bindgroups(
     mut commands: Commands,
+    bind_group: Option<Res<WaterBindGroup>>,
     pipeline: Res<WaterRenderPipeline>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     water_images: If<Res<WaterHeightTexture>>,
@@ -265,16 +275,25 @@ fn prepare_water_bindgroups(
     pipeline_cache: Res<PipelineCache>,
     render_queue: Res<RenderQueue>,
 ) {
-    *displacement.0.buffer.get_mut() = displacement_main.buffer.clone();
+    let uploaded = displacement.buffer.get_mut();
+    uploaded.count = displacement_main.buffer.len() as u32;
+    uploaded.items[..displacement_main.buffer.len()].copy_from_slice(&displacement_main.buffer);
     displacement
         .buffer
         .write_buffer(&render_device, &render_queue);
 
-    let water = gpu_images.get(&water_images.water).unwrap();
-    let flow_x = gpu_images.get(&water_images.flow_x).unwrap();
-    let flow_y = gpu_images.get(&water_images.flow_y).unwrap();
-    let base = gpu_images.get(&water_images.base_height).unwrap();
-    let outflow_scale = gpu_images.get(&water_images.outflow_scale).unwrap();
+    if bind_group.is_some() {
+        return;
+    }
+    let (Some(water), Some(flow_x), Some(flow_y), Some(base), Some(outflow_scale)) = (
+        gpu_images.get(&water_images.water),
+        gpu_images.get(&water_images.flow_x),
+        gpu_images.get(&water_images.flow_y),
+        gpu_images.get(&water_images.base_height),
+        gpu_images.get(&water_images.outflow_scale),
+    ) else {
+        return;
+    };
 
     let bind_group = render_device.create_bind_group(
         None,
@@ -311,10 +330,23 @@ pub fn height_from_texture(t: &Image, world: Vec2) -> f32 {
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
 struct DisplacementBufferMain {
-    buffer: Vec<Vec4>,
+    buffer: Vec<Displacement>,
+}
+
+#[derive(ShaderType, Clone, Copy, Default)]
+struct Displacement {
+    center: Vec2,
+    radius: f32,
+    push: f32,
+}
+
+#[derive(ShaderType)]
+struct Displacements {
+    count: u32,
+    items: [Displacement; MAX_DISPLACEMENTS],
 }
 
 #[derive(Resource)]
 struct DisplacementBuffer {
-    buffer: StorageBuffer<Vec<Vec4>>,
+    buffer: StorageBuffer<Displacements>,
 }
