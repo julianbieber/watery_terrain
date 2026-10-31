@@ -5,7 +5,18 @@ import package::grid;
 @group(0) @binding(1) var flow_x: texture_storage_2d<r32float, read_write>;
 @group(0) @binding(2) var flow_y: texture_storage_2d<r32float, read_write>;
 
-@group(0) @binding(3) var<storage, read> displacements: array<vec4f>;
+struct Displacement {
+    center: vec2f,
+    radius: f32,
+    push: f32,
+}
+
+struct Displacements {
+    count: u32,
+    items: array<Displacement, constants::MAX_DISPLACEMENTS>,
+}
+
+@group(0) @binding(3) var<storage, read> displacements: Displacements;
 
 @group(0) @binding(4) var base_height_texture: texture_storage_2d<r32float, read>;
 
@@ -51,13 +62,12 @@ struct DisplacementResult {
 }
 
 fn distance_from_displacement(p: vec2f) -> DisplacementResult {
-    let l = arrayLength(&displacements);
     var m = 10000000000.0;
     var current_min: i32 = -1;
 
-    for (var i: u32 = 0; i < l; i = i + 1) {
-        let c = displacements[i];
-        let d = length(c.xy - p)-c.z;
+    for (var i: u32 = 0; i < displacements.count; i = i + 1) {
+        let c = displacements.items[i];
+        let d = length(c.center - p) - c.radius;
         if d < m {
             m = d;
             current_min = i32(i);
@@ -74,20 +84,15 @@ fn displacement_push(d: DisplacementResult, p: vec2f, axis: vec2f) -> f32 {
     if d.index < 0 || d.distance >= 0.0 {
         return 0.0;
     }
-    let circle = displacements[d.index];
-    let offset = p - circle.xy;
+    let circle = displacements.items[d.index];
+    let offset = p - circle.center;
     let offset_length = length(offset);
     if offset_length == 0.0 {
         return 0.0;
     }
-    return dot(offset / offset_length, axis) * circle.w;
+    return dot(offset / offset_length, axis) * circle.push;
 }
 
-fn distance_from_specific(p: vec2f, i: u32) -> f32 {
-    let c = displacements[i];
-    let d = length(c.xy - p)-c.z;
-    return d;
-}
 // -------- pass 0: update flows on edges --------
 
 fn update_flows(invocation_id: vec3<u32>) {
