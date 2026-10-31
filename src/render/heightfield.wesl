@@ -42,6 +42,14 @@ fn sample(heights: texture_2d<f32>, cell: vec2f) -> f32 {
 
 const NORMAL_MAP_STRENGTH: f32 = 0.11;
 
+const TEXTURE_REPEAT_METRES: f32 = 51.2;
+
+// Texture coordinates at `world_xz`: one repeat of the surface textures every
+// TEXTURE_REPEAT_METRES along each axis.
+fn tiled_uv(world_xz: vec2f) -> vec2f {
+    return world_xz / TEXTURE_REPEAT_METRES;
+}
+
 // Vertex tangent for a surface with unit `normal`: along world +x, the
 // direction the texture's u grows, with the bitangent towards -z as Bevy's
 // normal mapping expects for v growing along +z. Its length scales the normal
