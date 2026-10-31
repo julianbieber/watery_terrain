@@ -1,13 +1,10 @@
+// Displacement of the water clipmap onto the simulated water surface, shared
+// by the forward and prepass vertex entry points.
+
 import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
 };
-
-@if(PREPASS_PIPELINE)
-import bevy_pbr::prepass::io::{Vertex, VertexOutput};
-@else
-import bevy_pbr::render::forward_io::{Vertex, VertexOutput};
-
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var water_height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var water_height_sampler: sampler;
@@ -36,36 +33,34 @@ fn get_height(vertex_position_world: vec2f) -> vec4f {
     );
     if h == 0.0{
         return vec4f(base_h - 0.1, normalize(n));
-    } 
+    }
 
     return vec4f(h+base_h, normalize(n));
 }
 
-@vertex
-fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
-    var out: VertexOutput;
-    let model = mesh_functions::get_world_from_local(vertex.instance_index);
-    out.world_position = model * vec4<f32>(vertex.position, 1.0);
-    // let height = get_height(out.world_position.xz/1024.0);
-    let height = get_height(out.world_position.xz * 10.0);
-    out.world_position.y = height.x;
+// A clipmap vertex moved onto the water surface. `height` is the surface
+// height followed by the surface normal.
+struct Displaced {
+    world_position: vec4f,
+    clip_position: vec4f,
+    height: vec4f,
+    uv: vec2f,
+}
 
-    @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
-        out.world_normal = height.yzw;
-    } @elif(!PREPASS_PIPELINE) {
-        out.world_normal = height.yzw;
-        @if(VERTEX_TANGENTS) {
-            if abs(dot(height.yzw, vec3(0,1,0))) < 0.899 {
-                out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0)*0.11;
-            } else {
-                out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0)*0.11; // fallback for near-vertical normals
-            }
-        }
+fn displace(instance_index: u32, local_position: vec3f) -> Displaced {
+    let model = mesh_functions::get_world_from_local(instance_index);
+    var world_position = model * vec4<f32>(local_position, 1.0);
+    let height = get_height(world_position.xz * 10.0);
+    world_position.y = height.x;
+
+    let uv = ((world_position.xz+1024.0)/2048.0)*40.0;
+
+    return Displaced(world_position, position_world_to_clip(world_position.xyz), height, uv);
+}
+
+fn world_tangent(normal: vec3f) -> vec4f {
+    if abs(dot(normal, vec3(0,1,0))) < 0.899 {
+        return vec4(normalize(cross(vec3(0,1,0), normal)), 1.0)*0.11;
     }
-
-    out.position = position_world_to_clip(out.world_position.xyz);
-
-    out.uv = ((out.world_position.xz+1024.0)/2048.0)*40.0;
-
-    return out;
+    return vec4(normalize(cross(vec3(1,0,0), normal)), 1.0)*0.11;
 }

@@ -1,13 +1,10 @@
+// Displacement of the terrain clipmap by the height texture, shared by the
+// forward and prepass vertex entry points.
+
 import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
 };
-
-@if(PREPASS_PIPELINE)
-import bevy_pbr::prepass::io::{Vertex, VertexOutput};
-@else
-import bevy_pbr::render::forward_io::{Vertex, VertexOutput};
-
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var height_sampler: sampler;
@@ -47,36 +44,34 @@ fn height_uv_range(h: f32) -> vec2f {
         return vec2f(0.5, 0.75);
     }
     return vec2f(0.75, 1.0);
-    
+
 }
 
-@vertex
-fn vertex(vertex: Vertex, @builtin(vertex_index) idx: u32) -> VertexOutput {
-    var out: VertexOutput;
-    let model = mesh_functions::get_world_from_local(vertex.instance_index);
-    out.world_position = model * vec4<f32>(vertex.position, 1.0);
-    // let height = get_height(out.world_position.xz/1024.0);
-    let height = get_height(out.world_position.xz * 10.0);
-    out.world_position.y = height.x;
+// A clipmap vertex moved onto the terrain surface. `height` is the sampled
+// height followed by the surface normal.
+struct Displaced {
+    world_position: vec4f,
+    clip_position: vec4f,
+    height: vec4f,
+    uv: vec2f,
+}
 
-    @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
-        out.world_normal = height.yzw;
-    } @elif(!PREPASS_PIPELINE) {
-        out.world_normal = height.yzw;
-        @if(VERTEX_TANGENTS) {
-            if abs(dot(height.xzw, vec3(0,1,0))) < 0.899 {
-                out.world_tangent = vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0)*0.11;
-            } else {
-                out.world_tangent = vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0)*0.11; // fallback for near-vertical normals
-            }
-        }
-    }
+fn displace(instance_index: u32, local_position: vec3f) -> Displaced {
+    let model = mesh_functions::get_world_from_local(instance_index);
+    var world_position = model * vec4<f32>(local_position, 1.0);
+    let height = get_height(world_position.xz * 10.0);
+    world_position.y = height.x;
 
-    out.position = position_world_to_clip(out.world_position.xyz);
-
-    let tiled_uv = ((out.world_position.xz+1024.0)/2048.0) * TERRAIN_UV_REPEAT;
+    let tiled_uv = ((world_position.xz+1024.0)/2048.0) * TERRAIN_UV_REPEAT;
     let u_range = height_uv_range(height.x);
-    out.uv = vec2f(mix(u_range.x, u_range.y, wrap(tiled_uv.x)), tiled_uv.y);
+    let uv = vec2f(mix(u_range.x, u_range.y, wrap(tiled_uv.x)), tiled_uv.y);
 
-    return out;
+    return Displaced(world_position, position_world_to_clip(world_position.xyz), height, uv);
+}
+
+fn world_tangent(height: vec4f) -> vec4f {
+    if abs(dot(height.xzw, vec3(0,1,0))) < 0.899 {
+        return vec4(normalize(cross(vec3(0,1,0), height.yzw)), 1.0)*0.11;
+    }
+    return vec4(normalize(cross(vec3(1,0,0), height.yzw)), 1.0)*0.11;
 }

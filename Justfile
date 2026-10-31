@@ -64,6 +64,45 @@ check-web:
 	  --profile ci \
 	  --target {{WASM_TARGET}}
 
+# Point wgsl-analyzer at the WESL sources of the bevy version in Cargo.lock.
+# src/wesl.toml depends on the packages this writes to .wesl-deps/; rerun after
+# every bevy bump.
+wesl-deps:
+	#!/usr/bin/env python3
+	import json, pathlib, shutil, subprocess
+	out = pathlib.Path(".wesl-deps")
+	shutil.rmtree(out, ignore_errors=True)
+	meta = json.loads(subprocess.run(
+	    ["cargo", "metadata", "--format-version", "1", "--locked"],
+	    capture_output=True, check=True).stdout)
+	crates = {}
+	for package in meta["packages"]:
+	    table = (package.get("metadata") or {}).get("wgsl-analyzer")
+	    if table and package["name"].startswith("bevy_"):
+	        crates[package["name"]] = (pathlib.Path(package["manifest_path"]).parent, table)
+	for name, (crate_dir, table) in sorted(crates.items()):
+	    shim = out / name
+	    shim.mkdir(parents=True)
+	    (shim / "src").symlink_to(crate_dir / table.get("root", "shaders"))
+	    deps = [d for d in table.get("dependencies", {}) if d in crates or d == "constants"]
+	    (shim / "wesl.toml").write_text(
+	        f'edition = "{table.get("edition", "2026_pre")}"\nroot = "src"\n\n[dependencies]\n'
+	        + "".join(d + ' = { path = "../' + d + '" }\n' for d in deps))
+	    print(f"{name} -> {crate_dir}")
+	constants = out / "constants" / "shaders"
+	constants.mkdir(parents=True)
+	(out / "constants" / "wesl.toml").write_text('edition = "2026_pre"\n')
+	(constants / "package.wesl").write_text("\n".join(
+	    f"const {name}: u32 = {value};" for name, value in [
+	        ("MATERIAL_BIND_GROUP", 3),
+	        ("SORTED_FRAGMENT_MAX_COUNT", 128),
+	        ("SCREEN_SPACE_SPECULAR_TRANSMISSION_BLUR_TAPS", 128),
+	        ("MAX_DIRECTIONAL_LIGHTS", 128),
+	        ("MAX_CASCADES_PER_LIGHT", 128),
+	        ("WORLD_CACHE_SIZE", 128),
+	        ("SHADOW_SAMPLES", 128),
+	    ]) + "\n")
+
 # Run everything in CI order
 all: fmt docs clippy bevy-lints test check-web
 
