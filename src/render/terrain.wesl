@@ -14,17 +14,14 @@ import bevy_pbr::render::{
 const TERRAIN_UV_REPEAT: f32 = 40.0;
 
 fn get_height(world_xz: vec2f) -> vec4f {
-    let uv = vec2i(floor(grid::cell_position(world_xz, textureDimensions(height_texture))));
-    let h: f32 = textureLoad(height_texture, uv, 0).r;
-
+    let cell = grid::cell_position(world_xz, textureDimensions(height_texture));
     let n = heightfield::normal(
-        textureLoad(height_texture, uv - vec2i(1, 0), 0).r,
-        textureLoad(height_texture, uv + vec2i(1, 0), 0).r,
-        textureLoad(height_texture, uv - vec2i(0, 1), 0).r,
-        textureLoad(height_texture, uv + vec2i(0, 1), 0).r,
+        heightfield::sample(height_texture, cell - vec2f(1.0, 0.0)),
+        heightfield::sample(height_texture, cell + vec2f(1.0, 0.0)),
+        heightfield::sample(height_texture, cell - vec2f(0.0, 1.0)),
+        heightfield::sample(height_texture, cell + vec2f(0.0, 1.0)),
     );
-
-    return vec4f(h, n);
+    return vec4f(heightfield::sample(height_texture, cell), n);
 }
 
 fn wrap(x: f32) -> f32 {
