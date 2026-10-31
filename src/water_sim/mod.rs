@@ -10,7 +10,8 @@ use bevy::{
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
-            PipelineCache, ShaderStages, StorageBuffer, TextureDimension, TextureUsages,
+            PipelineCache, ShaderStages, StorageBuffer, TextureDimension, TextureFormat,
+            TextureUsages,
             binding_types::{storage_buffer_read_only, texture_storage_2d},
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
@@ -174,37 +175,8 @@ fn init_internal_textures(
     info!("adding internal water tex");
     let material = material.get(trigger.entity).unwrap();
     let material = water_terrain_materials.get(material.0.id()).unwrap();
-    let water_height = images.get(material.extension.water.id()).unwrap();
-    let mut flow_x = Image::new(
-        Extent3d {
-            width: water_height.width() + 1,
-            height: water_height.width(),
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        (0..((water_height.width() + 1) * water_height.height()))
-            .flat_map(|_| 0.0f32.to_le_bytes())
-            .collect(),
-        bevy::render::render_resource::TextureFormat::R32Float,
-        RenderAssetUsages::all(),
-    );
-    flow_x.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST;
-    let mut flow_y = Image::new(
-        Extent3d {
-            width: water_height.width(),
-            height: water_height.width() + 1,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        (0..(water_height.width() * (water_height.height() + 1)))
-            .flat_map(|_| 0.0f32.to_le_bytes())
-            .collect(),
-        bevy::render::render_resource::TextureFormat::R32Float,
-        RenderAssetUsages::all(),
-    );
-    flow_y.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST;
-    let flow_y = images.add(flow_y);
-    let flow_x = images.add(flow_x);
+    let flow_x = images.add(zeroed_storage_texture(DIM + 1, DIM));
+    let flow_y = images.add(zeroed_storage_texture(DIM, DIM + 1));
 
     commands.insert_resource(WaterHeightTexture {
         water: material.extension.water.clone(),
@@ -212,6 +184,22 @@ fn init_internal_textures(
         flow_y,
         base_height: material.extension.base.clone(),
     });
+}
+
+fn zeroed_storage_texture(width: u32, height: u32) -> Image {
+    let mut image = Image::new_fill(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &0.0f32.to_le_bytes(),
+        TextureFormat::R32Float,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST;
+    image
 }
 
 fn init_water_render(
@@ -225,20 +213,20 @@ fn init_water_render(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(
-                    bevy::render::render_resource::TextureFormat::R32Float,
+                    TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 texture_storage_2d(
-                    bevy::render::render_resource::TextureFormat::R32Float,
+                    TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 texture_storage_2d(
-                    bevy::render::render_resource::TextureFormat::R32Float,
+                    TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 storage_buffer_read_only::<Vec<Vec4>>(false),
                 texture_storage_2d(
-                    bevy::render::render_resource::TextureFormat::R32Float,
+                    TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadOnly,
                 ),
             ),
