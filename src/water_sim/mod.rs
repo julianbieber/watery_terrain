@@ -16,11 +16,18 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, RenderQueue},
         texture::GpuImage,
     },
+    shader::ShaderDefVal,
 };
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 
-use crate::{render::clipmap::WaterTerrainMaterial, screens::Screen};
+use crate::{
+    grid::{DIM, cell_at},
+    render::clipmap::WaterTerrainMaterial,
+    screens::Screen,
+};
+
+const WORKGROUP_SIZE: u32 = 8;
 
 pub struct WaterSimPlugin;
 
@@ -120,7 +127,8 @@ fn run_water_sim(
             _pad: Vec3::ZERO,
         }),
     );
-    pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
+    let workgroups = (DIM + 1).div_ceil(WORKGROUP_SIZE);
+    pass.dispatch_workgroups(workgroups, workgroups, 1);
 
     pass.set_immediates(
         0,
@@ -129,7 +137,7 @@ fn run_water_sim(
             _pad: Vec3::ZERO,
         }),
     );
-    pass.dispatch_workgroups(2048 / 8, 2048 / 8, 1);
+    pass.dispatch_workgroups(workgroups, workgroups, 1);
 }
 
 fn update_water_sim(world: &mut World) {
@@ -242,6 +250,7 @@ fn init_water_render(
         layout: vec![texture_bind_group_layout.clone()],
         shader,
         entry_point: Some(Cow::from("main")),
+        shader_defs: vec![ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE)],
         immediate_size: std::mem::size_of::<SimParams>() as u32,
         ..Default::default()
     });
@@ -311,17 +320,10 @@ pub struct WaterHeightTexture {
 }
 
 pub fn height_from_texture(t: &Image, world: Vec2) -> f32 {
-    let uv = (world * 10.0 + 1024.0).floor();
-    if uv.x < 0.0 || uv.x as u32 >= t.width() {
+    let Some(cell) = cell_at(world) else {
         return 0.0;
-    }
-    if uv.y < 0.0 || uv.y as u32 >= t.height() {
-        return 0.0;
-    }
-    let x = uv.x as u32;
-    let y = uv.y as u32;
-
-    t.get_color_at(x, y).unwrap().to_linear().red
+    };
+    t.get_color_at(cell.x, cell.y).unwrap().to_linear().red
 }
 
 #[derive(Resource, Clone, ExtractResource)]

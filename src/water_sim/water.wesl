@@ -1,3 +1,5 @@
+import package::grid;
+
 @group(0) @binding(0) var input:  texture_storage_2d<r32float, read>;
 @group(0) @binding(1) var output: texture_storage_2d<r32float, write>;
 
@@ -76,7 +78,7 @@ fn update_flows(invocation_id: vec3<u32>) {
     let x = i32(invocation_id.x);
     let y = i32(invocation_id.y);
 
-    let p = vec2f(f32(x) - 1024.0, f32(y) - 1024.0) / 10.0;
+    let p = grid::world_position(vec2f(f32(x), f32(y)), textureDimensions(input));
     let d = distance_from_displacement(p);
     let dampening = 0.118;
     let momentum = 0.99;
@@ -178,7 +180,7 @@ fn update_water_height(invocation_id: vec3<u32>) {
 
 // -------- entry --------
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(constants::WORKGROUP_SIZE, constants::WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if sim.id == 0 {
         update_flows(invocation_id);
