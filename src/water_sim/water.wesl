@@ -9,6 +9,8 @@ import package::grid;
 
 @group(0) @binding(4) var base_height_texture: texture_storage_2d<r32float, read>;
 
+@group(0) @binding(5) var outflow_scale: texture_storage_2d<r32float, read_write>;
+
 
 struct SimParams {
     id: i32,
@@ -152,7 +154,44 @@ fn update_flows(invocation_id: vec3<u32>) {
     }
 }
 
-// -------- pass 1: update water height from net flow --------
+// Fraction of its outflows a cell can afford: all of them while it holds more
+// water than they carry away, proportionally less otherwise.
+fn update_outflow_scale(invocation_id: vec3<u32>) {
+    let l = vec2i(invocation_id.xy);
+    let size = vec2i(textureDimensions(water));
+    if (l.x >= size.x || l.y >= size.y) {
+        return;
+    }
+    let outflow = max(0.0, get_flow_x(l + vec2i(1, 0))) + max(0.0, -get_flow_x(l))
+        + max(0.0, get_flow_y(l + vec2i(0, 1))) + max(0.0, -get_flow_y(l));
+    let available = get_height(l).y;
+    var scale = 1.0;
+    if outflow > available {
+        scale = available / outflow;
+    }
+    textureStore(outflow_scale, l, vec4f(scale, 0.0, 0.0, 0.0));
+}
+
+fn source_scale(f: f32, positive_source: vec2i, negative_source: vec2i) -> f32 {
+    return textureLoad(outflow_scale, select(negative_source, positive_source, f > 0.0)).x;
+}
+
+// Scales every interior edge's flow by the outflow scale of the cell it
+// drains, so no cell gives away more water than it holds.
+fn limit_flows(invocation_id: vec3<u32>) {
+    let size = vec2i(textureDimensions(water));
+    let e = vec2i(invocation_id.xy);
+    if (e.x > 0 && e.x < size.x && e.y < size.y) {
+        let f = get_flow_x(e);
+        set_flow_x(e, f * source_scale(f, e - vec2i(1, 0), e));
+    }
+    if (e.x < size.x && e.y > 0 && e.y < size.y) {
+        let f = get_flow_y(e);
+        set_flow_y(e, f * source_scale(f, e - vec2i(0, 1), e));
+    }
+}
+
+// -------- pass 3: update water height from net flow --------
 
 fn update_water_height(invocation_id: vec3<u32>) {
     let l = vec2i(invocation_id.xy);
@@ -188,6 +227,10 @@ fn main(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if sim.id == 0 {
         update_flows(invocation_id);
     } else if sim.id == 1 {
+        update_outflow_scale(invocation_id);
+    } else if sim.id == 2 {
+        limit_flows(invocation_id);
+    } else if sim.id == 3 {
         update_water_height(invocation_id);
     }
 }
