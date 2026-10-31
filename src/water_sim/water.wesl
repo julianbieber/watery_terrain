@@ -9,6 +9,7 @@ struct Displacement {
     center: vec2f,
     radius: f32,
     push: f32,
+    entity: vec2u,
 }
 
 struct Displacements {
@@ -21,6 +22,19 @@ struct Displacements {
 @group(0) @binding(4) var base_height_texture: texture_storage_2d<r32float, read>;
 
 @group(0) @binding(5) var outflow_scale: texture_storage_2d<r32float, read_write>;
+
+struct WaterSample {
+    entity: vec2u,
+    depth: f32,
+    ground: f32,
+}
+
+struct WaterSamples {
+    count: u32,
+    items: array<WaterSample, constants::MAX_DISPLACEMENTS>,
+}
+
+@group(0) @binding(6) var<storage, read_write> samples: WaterSamples;
 
 
 struct SimParams {
@@ -67,6 +81,9 @@ fn distance_from_displacement(p: vec2f) -> DisplacementResult {
 
     for (var i: u32 = 0; i < displacements.count; i = i + 1) {
         let c = displacements.items[i];
+        if c.push == 0.0 {
+            continue;
+        }
         let d = length(c.center - p) - c.radius;
         if d < m {
             m = d;
@@ -225,6 +242,27 @@ fn update_water_height(invocation_id: vec3<u32>) {
     set_height(l, new_height);
 }
 
+// Records the water depth and ground height under every displacement, for
+// the CPU to read back; one thread per displacement.
+fn sample_water(invocation_id: vec3<u32>) {
+    let i = invocation_id.x + invocation_id.y * constants::WORKGROUP_SIZE;
+    if i == 0 {
+        samples.count = displacements.count;
+    }
+    if i >= displacements.count {
+        return;
+    }
+    let displacement = displacements.items[i];
+    let dims = textureDimensions(water);
+    let cell = vec2i(floor(grid::cell_position(displacement.center, dims)));
+    var sample = WaterSample(displacement.entity, 0.0, 0.0);
+    if all(cell >= vec2i(0)) && all(cell < vec2i(dims)) {
+        sample.depth = textureLoad(water, cell).x;
+        sample.ground = textureLoad(base_height_texture, cell).x;
+    }
+    samples.items[i] = sample;
+}
+
 // -------- entry --------
 
 @compute @workgroup_size(constants::WORKGROUP_SIZE, constants::WORKGROUP_SIZE, 1)
@@ -237,5 +275,7 @@ fn main(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         limit_flows(invocation_id);
     } else if sim.id == 3 {
         update_water_height(invocation_id);
+    } else if sim.id == 4 {
+        sample_water(invocation_id);
     }
 }

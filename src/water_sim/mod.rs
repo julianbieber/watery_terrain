@@ -1,20 +1,23 @@
 use avian3d::prelude::LinearVelocity;
 use bevy::{
     asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
+    ecs::entity::EntityHashMap,
     pbr::ExtendedMaterial,
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
+        gpu_readback::{Readback, ReadbackComplete},
         render_asset::RenderAssets,
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
             PipelineCache, ShaderStages, ShaderType, StorageBuffer, TextureDimension,
             TextureFormat, TextureUsages,
-            binding_types::{storage_buffer_read_only, texture_storage_2d},
+            binding_types::{storage_buffer, storage_buffer_read_only, texture_storage_2d},
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
+        storage::{GpuShaderBuffer, ShaderBuffer},
         texture::GpuImage,
     },
     shader::ShaderDefVal,
@@ -22,11 +25,7 @@ use bevy::{
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 
-use crate::{
-    grid::{DIM, cell_at},
-    render::clipmap::WaterTerrainMaterial,
-    screens::Screen,
-};
+use crate::{grid::DIM, render::clipmap::WaterTerrainMaterial, screens::Screen};
 
 const WORKGROUP_SIZE: u32 = 8;
 
@@ -34,7 +33,7 @@ const STEP_SECONDS: f32 = 1.0 / 60.0;
 
 const MAX_STEPS_PER_FRAME: u32 = 4;
 
-const MAX_DISPLACEMENTS: usize = 64;
+const MAX_DISPLACEMENTS: usize = (WORKGROUP_SIZE * WORKGROUP_SIZE) as usize;
 
 pub struct WaterSimPlugin;
 
@@ -50,6 +49,7 @@ impl Plugin for WaterSimPlugin {
         app.init_resource::<WaterSimSteps>();
         app.add_systems(Update, count_sim_steps);
         app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
+        app.init_resource::<WaterAtObjects>();
         app.add_systems(
             Update,
             collect_displacements.run_if(in_state(Screen::Gameplay)),
@@ -78,28 +78,59 @@ pub struct WaterDisplacement {
     pub strength: f32,
 }
 
+/// The water column under each [`WaterDisplacement`] object, as the GPU last
+/// sampled it. An object appears here a few frames after it first gets a
+/// [`WaterDisplacement`], and the sample lags its position by as long.
+#[derive(Resource, Default)]
+pub struct WaterAtObjects(pub EntityHashMap<WaterColumn>);
+
+/// Water depth and ground height in metres at one point of the grid.
+#[derive(Clone, Copy, Debug)]
+pub struct WaterColumn {
+    pub depth: f32,
+    pub ground: f32,
+}
+
 fn collect_displacements(
-    mut d: Query<(&mut LinearVelocity, &Transform, &WaterDisplacement)>,
+    mut d: Query<(Entity, &mut LinearVelocity, &Transform, &WaterDisplacement)>,
     mut buffer: ResMut<DisplacementBufferMain>,
-    water_height: Res<WaterHeightTexture>,
-    textures: Res<Assets<Image>>,
+    water: Res<WaterAtObjects>,
 ) {
-    let water = textures.get(water_height.water.id()).unwrap();
-    let base = textures.get(water_height.base_height.id()).unwrap();
     buffer.buffer.clear();
-    for (mut velocity, transform, w) in d.iter_mut().take(MAX_DISPLACEMENTS) {
-        let h = height_from_texture(water, transform.translation.xz());
-        let base_h = height_from_texture(base, transform.translation.xz());
-        let t_h = transform.translation.y;
-        let relative_to_water = (t_h - w.radius) - base_h;
-        if relative_to_water < h && h > 0.0 {
-            let in_water = (h - relative_to_water).min(w.radius * 2.0) / (w.radius * 2.0);
-            buffer.buffer.push(Displacement {
-                center: transform.translation.xz(),
-                radius: w.radius,
-                push: w.strength * in_water,
-            });
-            velocity.0.y = in_water * 0.8;
+    for (entity, mut velocity, transform, w) in d.iter_mut().take(MAX_DISPLACEMENTS) {
+        let mut push = 0.0;
+        if let Some(column) = water.0.get(&entity) {
+            let h = column.depth;
+            let relative_to_water = (transform.translation.y - w.radius) - column.ground;
+            if relative_to_water < h && h > 0.0 {
+                let in_water = (h - relative_to_water).min(w.radius * 2.0) / (w.radius * 2.0);
+                push = w.strength * in_water;
+                velocity.0.y = in_water * 0.8;
+            }
+        }
+        let bits = entity.to_bits();
+        buffer.buffer.push(Displacement {
+            center: transform.translation.xz(),
+            radius: w.radius,
+            push,
+            entity: UVec2::new(bits as u32, (bits >> 32) as u32),
+        });
+    }
+}
+
+fn store_water_samples(readback: On<ReadbackComplete>, mut water: ResMut<WaterAtObjects>) {
+    let samples: WaterSamples = readback.to_shader_type();
+    water.0.clear();
+    for sample in &samples.items[..samples.count as usize] {
+        let bits = u64::from(sample.entity.x) | (u64::from(sample.entity.y) << 32);
+        if let Some(entity) = Entity::try_from_bits(bits) {
+            water.0.insert(
+                entity,
+                WaterColumn {
+                    depth: sample.depth,
+                    ground: sample.ground,
+                },
+            );
         }
     }
 }
@@ -157,6 +188,15 @@ fn run_water_sim(
             pass.dispatch_workgroups(workgroups, workgroups, 1);
         }
     }
+
+    pass.set_immediates(
+        0,
+        bytemuck::bytes_of(&SimParams {
+            id: 4,
+            _pad: Vec3::ZERO,
+        }),
+    );
+    pass.dispatch_workgroups(1, 1, 1);
 }
 
 #[repr(C)]
@@ -177,6 +217,7 @@ fn init_internal_textures(
     material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
     water_terrain_materials: Res<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     info!("adding internal water tex");
     let material = material.get(trigger.entity).unwrap();
@@ -184,6 +225,16 @@ fn init_internal_textures(
     let flow_x = images.add(zeroed_storage_texture(DIM + 1, DIM));
     let flow_y = images.add(zeroed_storage_texture(DIM, DIM + 1));
     let outflow_scale = images.add(zeroed_storage_texture(DIM, DIM));
+    let samples = buffers.add(ShaderBuffer::with_size(
+        WaterSamples::min_size().get(),
+        RenderAssetUsages::RENDER_WORLD,
+    ));
+    commands
+        .spawn((
+            DespawnOnExit(Screen::Gameplay),
+            Readback::buffer(samples.clone()),
+        ))
+        .observe(store_water_samples);
 
     commands.insert_resource(WaterHeightTexture {
         water: material.extension.water.clone(),
@@ -191,6 +242,7 @@ fn init_internal_textures(
         flow_y,
         base_height: material.extension.base.clone(),
         outflow_scale,
+        samples,
     });
 }
 
@@ -241,6 +293,7 @@ fn init_water_render(
                     TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
+                storage_buffer::<WaterSamples>(false),
             ),
         ),
     );
@@ -268,6 +321,7 @@ fn prepare_water_bindgroups(
     bind_group: Option<Res<WaterBindGroup>>,
     pipeline: Res<WaterRenderPipeline>,
     gpu_images: Res<RenderAssets<GpuImage>>,
+    gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
     water_images: If<Res<WaterHeightTexture>>,
     mut displacement: If<ResMut<DisplacementBuffer>>,
     displacement_main: If<Res<DisplacementBufferMain>>,
@@ -285,12 +339,13 @@ fn prepare_water_bindgroups(
     if bind_group.is_some() {
         return;
     }
-    let (Some(water), Some(flow_x), Some(flow_y), Some(base), Some(outflow_scale)) = (
+    let (Some(water), Some(flow_x), Some(flow_y), Some(base), Some(outflow_scale), Some(samples)) = (
         gpu_images.get(&water_images.water),
         gpu_images.get(&water_images.flow_x),
         gpu_images.get(&water_images.flow_y),
         gpu_images.get(&water_images.base_height),
         gpu_images.get(&water_images.outflow_scale),
+        gpu_buffers.get(&water_images.samples),
     ) else {
         return;
     };
@@ -305,6 +360,7 @@ fn prepare_water_bindgroups(
             displacement.buffer.binding().unwrap(),
             &base.texture_view,
             &outflow_scale.texture_view,
+            samples.buffer.as_entire_buffer_binding(),
         )),
     );
     commands.insert_resource(WaterBindGroup(bind_group));
@@ -318,13 +374,7 @@ pub struct WaterHeightTexture {
     pub flow_y: Handle<Image>,
     pub base_height: Handle<Image>,
     pub outflow_scale: Handle<Image>,
-}
-
-pub fn height_from_texture(t: &Image, world: Vec2) -> f32 {
-    let Some(cell) = cell_at(world) else {
-        return 0.0;
-    };
-    t.get_color_at(cell.x, cell.y).unwrap().to_linear().red
+    pub samples: Handle<ShaderBuffer>,
 }
 
 #[derive(Resource, Clone, ExtractResource)]
@@ -338,12 +388,35 @@ struct Displacement {
     center: Vec2,
     radius: f32,
     push: f32,
+    entity: UVec2,
 }
 
 #[derive(ShaderType)]
 struct Displacements {
     count: u32,
     items: [Displacement; MAX_DISPLACEMENTS],
+}
+
+#[derive(ShaderType, Clone, Copy, Default)]
+struct WaterSample {
+    entity: UVec2,
+    depth: f32,
+    ground: f32,
+}
+
+#[derive(ShaderType)]
+struct WaterSamples {
+    count: u32,
+    items: [WaterSample; MAX_DISPLACEMENTS],
+}
+
+impl Default for WaterSamples {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            items: [WaterSample::default(); MAX_DISPLACEMENTS],
+        }
+    }
 }
 
 #[derive(Resource)]

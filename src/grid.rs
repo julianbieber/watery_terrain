@@ -16,14 +16,6 @@ pub const CELLS_PER_METER: u32 = 10;
 /// Side length of one cell in metres.
 pub const CELL_SIZE: f32 = 1.0 / CELLS_PER_METER as f32;
 
-/// The cell whose lower corner lies at `world` (xz), or `None` when `world`
-/// is outside the grid. The grid is centred on the world origin.
-pub fn cell_at(world: Vec2) -> Option<UVec2> {
-    let cell = (world * CELLS_PER_METER as f32 + DIM as f32 / 2.0).floor();
-    let inside = cell.cmpge(Vec2::ZERO).all() && cell.cmplt(Vec2::splat(DIM as f32)).all();
-    inside.then(|| cell.as_uvec2())
-}
-
 /// World position (xz) of the lower corner of `cell`, where the heightmap
 /// sample of that cell sits.
 pub fn corner_of(cell: UVec2) -> Vec2 {
