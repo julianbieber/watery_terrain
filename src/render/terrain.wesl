@@ -2,6 +2,7 @@
 // forward and prepass vertex entry points.
 
 import package::grid;
+import package::render::heightfield;
 import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
@@ -16,17 +17,14 @@ fn get_height(world_xz: vec2f) -> vec4f {
     let uv = vec2i(floor(grid::cell_position(world_xz, textureDimensions(height_texture))));
     let h: f32 = textureLoad(height_texture, uv, 0).r;
 
-    let L = textureLoad(height_texture, uv + vec2i(-1,  0), 0).r;
-    let R = textureLoad(height_texture, uv + vec2i(1,  0), 0).r;
-    let D = textureLoad(height_texture, uv + vec2i( 0, 1), 0).r;
-    let U = textureLoad(height_texture, uv + vec2i( 0,  -1), 0).r;
-    let n = vec3f(
-        (L - R) * 1.0,
-        1.0,
-        (D - U) * 1.0
+    let n = heightfield::normal(
+        textureLoad(height_texture, uv - vec2i(1, 0), 0).r,
+        textureLoad(height_texture, uv + vec2i(1, 0), 0).r,
+        textureLoad(height_texture, uv - vec2i(0, 1), 0).r,
+        textureLoad(height_texture, uv + vec2i(0, 1), 0).r,
     );
 
-    return vec4f(h, normalize(n));
+    return vec4f(h, n);
 }
 
 fn wrap(x: f32) -> f32 {
