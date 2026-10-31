@@ -11,8 +11,6 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var height_sampler: sampler;
 
-const TERRAIN_UV_REPEAT: f32 = 40.0;
-
 fn get_height(world_xz: vec2f) -> vec4f {
     let cell = grid::cell_position(world_xz, textureDimensions(height_texture));
     let n = heightfield::normal(
@@ -23,11 +21,6 @@ fn get_height(world_xz: vec2f) -> vec4f {
     );
     return vec4f(heightfield::sample(height_texture, cell), n);
 }
-
-fn wrap(x: f32) -> f32 {
-    return fract(x + ceil(abs(x)));
-}
-
 
 // Upper edges of the sand, grass and rock bands in metres; snow lies above.
 // They sit near the quartiles of the generated terrain's heights, so each
@@ -64,9 +57,9 @@ fn displace(instance_index: u32, local_position: vec3f) -> Displaced {
     let height = get_height(world_position.xz);
     world_position.y = height.x;
 
-    let tiled_uv = ((world_position.xz+1024.0)/2048.0) * TERRAIN_UV_REPEAT;
+    let tiled_uv = heightfield::tiled_uv(world_position.xz);
     let u_range = height_uv_range(height.x);
-    let uv = vec2f(mix(u_range.x, u_range.y, wrap(tiled_uv.x)), tiled_uv.y);
+    let uv = vec2f(mix(u_range.x, u_range.y, fract(tiled_uv.x)), tiled_uv.y);
 
     return Displaced(world_position, position_world_to_clip(world_position.xyz), height, uv);
 }

@@ -89,7 +89,7 @@ fn displace(instance_index: u32, local_position: vec3f) -> Displaced {
     let height = get_height(world_position.xz);
     world_position.y = height.x;
 
-    let uv = ((world_position.xz+1024.0)/2048.0)*40.0;
+    let uv = heightfield::tiled_uv(world_position.xz);
 
     return Displaced(world_position, position_world_to_clip(world_position.xyz), height, uv);
 }
