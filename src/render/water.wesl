@@ -13,26 +13,63 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var base_height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var base_height_sampler: sampler;
 
+struct Column {
+    water: f32,
+    ground: f32,
+}
+
+fn column(texel: vec2i) -> Column {
+    let clamped = heightfield::clamp_texel(texel, textureDimensions(water_height_texture));
+    return Column(
+        textureLoad(water_height_texture, clamped, 0).r,
+        textureLoad(base_height_texture, clamped, 0).r,
+    );
+}
+
 fn surface(texel: vec2i) -> f32 {
-    return textureLoad(water_height_texture, texel, 0).r + textureLoad(base_height_texture, texel, 0).r;
+    let c = column(texel);
+    return c.water + c.ground;
+}
+
+// Height the water is drawn at: its surface where there is water, just
+// below the terrain where there is none, so dry ground hides it.
+fn drawn(texel: vec2i) -> f32 {
+    let c = column(texel);
+    if c.water == 0.0 {
+        return c.ground - 0.1;
+    }
+    return c.water + c.ground;
+}
+
+fn sample_surface(cell: vec2f) -> f32 {
+    let c = heightfield::corners(cell);
+    return heightfield::mix_corners(vec4f(
+        surface(c.origin),
+        surface(c.origin + vec2i(1, 0)),
+        surface(c.origin + vec2i(0, 1)),
+        surface(c.origin + vec2i(1, 1)),
+    ), c.fraction);
+}
+
+fn sample_drawn(cell: vec2f) -> f32 {
+    let c = heightfield::corners(cell);
+    return heightfield::mix_corners(vec4f(
+        drawn(c.origin),
+        drawn(c.origin + vec2i(1, 0)),
+        drawn(c.origin + vec2i(0, 1)),
+        drawn(c.origin + vec2i(1, 1)),
+    ), c.fraction);
 }
 
 fn get_height(world_xz: vec2f) -> vec4f {
-    let uv = vec2i(floor(grid::cell_position(world_xz, textureDimensions(water_height_texture))));
-    let h: f32 = textureLoad(water_height_texture, uv, 0).r;
-    let base_h: f32 = textureLoad(base_height_texture, uv, 0).r;
-
+    let cell = grid::cell_position(world_xz, textureDimensions(water_height_texture));
     let n = heightfield::normal(
-        surface(uv - vec2i(1, 0)),
-        surface(uv + vec2i(1, 0)),
-        surface(uv - vec2i(0, 1)),
-        surface(uv + vec2i(0, 1)),
+        sample_surface(cell - vec2f(1.0, 0.0)),
+        sample_surface(cell + vec2f(1.0, 0.0)),
+        sample_surface(cell - vec2f(0.0, 1.0)),
+        sample_surface(cell + vec2f(0.0, 1.0)),
     );
-    if h == 0.0{
-        return vec4f(base_h - 0.1, n);
-    }
-
-    return vec4f(h+base_h, n);
+    return vec4f(sample_drawn(cell), n);
 }
 
 // A clipmap vertex moved onto the water surface. `height` is the surface
