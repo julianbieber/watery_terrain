@@ -2,6 +2,7 @@
 
 import bevy_pbr::render::forward_io::{Vertex, VertexOutput};
 import package::render::water;
+import package::render::heightfield;
 
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
@@ -11,7 +12,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position = displaced.clip_position;
     out.world_normal = displaced.height.yzw;
     @if(VERTEX_TANGENTS)
-    out.world_tangent = water::world_tangent(displaced.height.yzw);
+    out.world_tangent = heightfield::tangent(displaced.height.yzw);
     out.uv = displaced.uv;
     return out;
 }

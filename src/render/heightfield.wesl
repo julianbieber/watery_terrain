@@ -40,6 +40,16 @@ fn sample(heights: texture_2d<f32>, cell: vec2f) -> f32 {
     ), c.fraction);
 }
 
+const NORMAL_MAP_STRENGTH: f32 = 0.11;
+
+// Vertex tangent for a surface with unit `normal`: along world +x, the
+// direction the texture's u grows, with the bitangent towards -z as Bevy's
+// normal mapping expects for v growing along +z. Its length scales the normal
+// map's bumps, equally along both axes.
+fn tangent(normal: vec3f) -> vec4f {
+    return vec4f(normalize(vec3f(normal.y, -normal.x, 0.0)) * NORMAL_MAP_STRENGTH, 1.0);
+}
+
 // Unit normal of the surface from its heights one cell to either side of a
 // point along world x (`x_minus`, `x_plus`) and world z (`z_minus`, `z_plus`).
 fn normal(x_minus: f32, x_plus: f32, z_minus: f32, z_plus: f32) -> vec3f {
