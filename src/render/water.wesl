@@ -2,6 +2,7 @@
 // by the forward and prepass vertex entry points.
 
 import package::grid;
+import package::render::heightfield;
 import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
@@ -12,31 +13,26 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var base_height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var base_height_sampler: sampler;
 
+fn surface(texel: vec2i) -> f32 {
+    return textureLoad(water_height_texture, texel, 0).r + textureLoad(base_height_texture, texel, 0).r;
+}
+
 fn get_height(world_xz: vec2f) -> vec4f {
     let uv = vec2i(floor(grid::cell_position(world_xz, textureDimensions(water_height_texture))));
     let h: f32 = textureLoad(water_height_texture, uv, 0).r;
-
-    let L = textureLoad(water_height_texture, uv + vec2i(-1,  0), 0).r;
-    let R = textureLoad(water_height_texture, uv + vec2i(1,  0), 0).r;
-    let D = textureLoad(water_height_texture, uv + vec2i( 0, 1), 0).r;
-    let U = textureLoad(water_height_texture, uv + vec2i( 0,  -1), 0).r;
-
     let base_h: f32 = textureLoad(base_height_texture, uv, 0).r;
 
-    let base_L = textureLoad(base_height_texture, uv + vec2i(-1,  0), 0).r;
-    let base_R = textureLoad(base_height_texture, uv + vec2i(1,  0), 0).r;
-    let base_D = textureLoad(base_height_texture, uv + vec2i( 0, 1), 0).r;
-    let base_U = textureLoad(base_height_texture, uv + vec2i( 0,  -1), 0).r;
-    let n = vec3f(
-        ((L+base_L) - (R+base_R)) * 1.0,
-        1.0,
-        ((D+base_D) - (U+base_U)) * 1.0
+    let n = heightfield::normal(
+        surface(uv - vec2i(1, 0)),
+        surface(uv + vec2i(1, 0)),
+        surface(uv - vec2i(0, 1)),
+        surface(uv + vec2i(0, 1)),
     );
     if h == 0.0{
-        return vec4f(base_h - 0.1, normalize(n));
+        return vec4f(base_h - 0.1, n);
     }
 
-    return vec4f(h+base_h, normalize(n));
+    return vec4f(h+base_h, n);
 }
 
 // A clipmap vertex moved onto the water surface. `height` is the surface

@@ -13,6 +13,7 @@ impl Plugin for TerrainRanderPlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "terrain.wesl");
         load_shader_library!(app, "water.wesl");
+        load_shader_library!(app, "heightfield.wesl");
         embedded_asset!(app, "terrain_forward.wesl");
         embedded_asset!(app, "terrain_prepass.wesl");
         embedded_asset!(app, "water_forward.wesl");
