@@ -140,7 +140,7 @@ fn run_water_sim(
 
     let workgroups = (DIM + 1).div_ceil(WORKGROUP_SIZE);
     for _ in 0..steps.0.due {
-        for id in [0, 1] {
+        for id in [0, 1, 2, 3] {
             pass.set_immediates(
                 0,
                 bytemuck::bytes_of(&SimParams {
@@ -177,12 +177,14 @@ fn init_internal_textures(
     let material = water_terrain_materials.get(material.0.id()).unwrap();
     let flow_x = images.add(zeroed_storage_texture(DIM + 1, DIM));
     let flow_y = images.add(zeroed_storage_texture(DIM, DIM + 1));
+    let outflow_scale = images.add(zeroed_storage_texture(DIM, DIM));
 
     commands.insert_resource(WaterHeightTexture {
         water: material.extension.water.clone(),
         flow_x,
         flow_y,
         base_height: material.extension.base.clone(),
+        outflow_scale,
     });
 }
 
@@ -229,6 +231,10 @@ fn init_water_render(
                     TextureFormat::R32Float,
                     bevy::render::render_resource::StorageTextureAccess::ReadOnly,
                 ),
+                texture_storage_2d(
+                    TextureFormat::R32Float,
+                    bevy::render::render_resource::StorageTextureAccess::ReadWrite,
+                ),
             ),
         ),
     );
@@ -268,6 +274,7 @@ fn prepare_water_bindgroups(
     let flow_x = gpu_images.get(&water_images.flow_x).unwrap();
     let flow_y = gpu_images.get(&water_images.flow_y).unwrap();
     let base = gpu_images.get(&water_images.base_height).unwrap();
+    let outflow_scale = gpu_images.get(&water_images.outflow_scale).unwrap();
 
     let bind_group = render_device.create_bind_group(
         None,
@@ -278,6 +285,7 @@ fn prepare_water_bindgroups(
             &flow_y.texture_view,
             displacement.buffer.binding().unwrap(),
             &base.texture_view,
+            &outflow_scale.texture_view,
         )),
     );
     commands.insert_resource(WaterBindGroup(bind_group));
@@ -290,6 +298,7 @@ pub struct WaterHeightTexture {
     pub flow_x: Handle<Image>,
     pub flow_y: Handle<Image>,
     pub base_height: Handle<Image>,
+    pub outflow_scale: Handle<Image>,
 }
 
 pub fn height_from_texture(t: &Image, world: Vec2) -> f32 {
