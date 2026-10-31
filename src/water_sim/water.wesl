@@ -79,8 +79,8 @@ fn update_flows(invocation_id: vec3<u32>) {
 
     let p = grid::world_position(vec2f(f32(x), f32(y)), textureDimensions(water));
     let d = distance_from_displacement(p);
-    let dampening = 0.118;
-    let momentum = 0.99;
+    let acceleration = 0.118;
+    let damping = 0.99;
 
     // Horizontal edges (flow_x): (ex, y), ex in [0..W]
     if (x <= size.x && y < size.y) {
@@ -102,7 +102,7 @@ fn update_flows(invocation_id: vec3<u32>) {
             } else if dh > 0.0 {
                 dh = min(dh, hL.y);
             }
-            f = f *momentum + dh * dampening;
+            f = f * damping + dh * acceleration;
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
                 // if p.x != displacement_circle.x || p.y != displacement_circle.y {
@@ -135,7 +135,7 @@ fn update_flows(invocation_id: vec3<u32>) {
             } else if dh > 0.0 {
                 dh = min(dh, hD.y);
             }
-            f = f * momentum + dh * dampening;
+            f = f * damping + dh * acceleration;
             if d.index >= 0 && d.distance < 0.0 {
                 let displacement_circle = displacements[d.index];
                 // if p.x != displacement_circle.x || p.y != displacement_circle.y {
