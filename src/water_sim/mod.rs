@@ -1,4 +1,4 @@
-use avian3d::prelude::LinearVelocity;
+use avian3d::prelude::{Forces, Gravity, ReadRigidBodyForces, WriteRigidBodyForces};
 use bevy::{
     asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
     ecs::entity::EntityHashMap,
@@ -33,6 +33,10 @@ const STEP_SECONDS: f32 = 1.0 / 60.0;
 
 const MAX_STEPS_PER_FRAME: u32 = 4;
 
+const WATER_DENSITY_RATIO: f32 = 2.0;
+
+const WATER_DRAG_PER_SECOND: f32 = 2.0;
+
 const MAX_DISPLACEMENTS: usize = (WORKGROUP_SIZE * WORKGROUP_SIZE) as usize;
 
 pub struct WaterSimPlugin;
@@ -53,6 +57,10 @@ impl Plugin for WaterSimPlugin {
         app.add_systems(
             Update,
             collect_displacements.run_if(in_state(Screen::Gameplay)),
+        );
+        app.add_systems(
+            FixedUpdate,
+            apply_buoyancy.run_if(in_state(Screen::Gameplay)),
         );
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
@@ -91,30 +99,50 @@ pub struct WaterColumn {
     pub ground: f32,
 }
 
+fn submerged_fraction(column: &WaterColumn, transform: &Transform, radius: f32) -> f32 {
+    let bottom_above_ground = (transform.translation.y - radius) - column.ground;
+    if column.depth <= 0.0 || bottom_above_ground >= column.depth {
+        return 0.0;
+    }
+    (column.depth - bottom_above_ground).min(radius * 2.0) / (radius * 2.0)
+}
+
 fn collect_displacements(
-    mut d: Query<(Entity, &mut LinearVelocity, &Transform, &WaterDisplacement)>,
+    d: Query<(Entity, &Transform, &WaterDisplacement)>,
     mut buffer: ResMut<DisplacementBufferMain>,
     water: Res<WaterAtObjects>,
 ) {
     buffer.buffer.clear();
-    for (entity, mut velocity, transform, w) in d.iter_mut().take(MAX_DISPLACEMENTS) {
-        let mut push = 0.0;
-        if let Some(column) = water.0.get(&entity) {
-            let h = column.depth;
-            let relative_to_water = (transform.translation.y - w.radius) - column.ground;
-            if relative_to_water < h && h > 0.0 {
-                let in_water = (h - relative_to_water).min(w.radius * 2.0) / (w.radius * 2.0);
-                push = w.strength * in_water;
-                velocity.0.y = in_water * 0.8;
-            }
-        }
+    for (entity, transform, w) in d.iter().take(MAX_DISPLACEMENTS) {
+        let in_water = water.0.get(&entity).map_or(0.0, |column| {
+            submerged_fraction(column, transform, w.radius)
+        });
         let bits = entity.to_bits();
         buffer.buffer.push(Displacement {
             center: transform.translation.xz(),
             radius: w.radius,
-            push,
+            push: w.strength * in_water,
             entity: UVec2::new(bits as u32, (bits >> 32) as u32),
         });
+    }
+}
+
+fn apply_buoyancy(
+    mut bodies: Query<(Entity, Forces, &Transform, &WaterDisplacement)>,
+    water: Res<WaterAtObjects>,
+    gravity: Res<Gravity>,
+) {
+    for (entity, mut forces, transform, w) in &mut bodies {
+        let Some(column) = water.0.get(&entity) else {
+            continue;
+        };
+        let in_water = submerged_fraction(column, transform, w.radius);
+        if in_water == 0.0 {
+            continue;
+        }
+        let lift = gravity.0.length() * WATER_DENSITY_RATIO * in_water;
+        let drag = -forces.linear_velocity().y * WATER_DRAG_PER_SECOND * in_water;
+        forces.apply_linear_acceleration(Vec3::Y * (lift + drag));
     }
 }
 
