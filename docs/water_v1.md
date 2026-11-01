@@ -10,31 +10,68 @@ tags:
 ## Overview
 
 The water system is a 2D shallow-water simulation on a staggered grid, run
-entirely on the GPU in compute shaders. It covers 204.8 m × 204.8 m at 0.1 m
-resolution (2048 × 2048 cells), centred on the world origin. The water depth
-texture it updates in place is the same texture the water material draws.
+entirely on the GPU in compute shaders. The world is 6 × 6 chunks of
+1024 × 1024 cells at 0.1 m (614.4 m a side), centred on the world origin. Only
+the 3 × 3 chunk window around the camera (307.2 m a side) is drawn, collides
+and is simulated. The water depth texture the sim updates in place is the same
+texture the water material draws.
 
 ## Grid & Coordinate System
 
-`src/grid.rs` defines the grid once: `DIM = 2048` cells per side,
-`CELLS_PER_METER = 10`. The shaders get the cell density as the shader def
-`constants::CELLS_PER_METER` through `package::grid` (`src/grid.wesl`) and take
-the size from `textureDimensions`, so neither side repeats the numbers.
+`src/grid.rs` defines the grid once: `CHUNK_DIM = 1024` cells per chunk side,
+`WORLD_CHUNKS = 6`, `WINDOW_CHUNKS = 3`, `CELLS_PER_METER = 10`. The shaders
+get them as shader defs through `package::grid` (`src/grid.wesl`), so neither
+side repeats the numbers.
 
-| Texture | Dimensions | Purpose |
-|---------|------------|---------|
-| `water` | 2048×2048 | Water depth in metres, updated in place |
-| `base_height` | 2048×2048 | Terrain height in metres, static |
-| `flow_x` | 2049×2048 | Flow across the vertical cell edges |
-| `flow_y` | 2048×2049 | Flow across the horizontal cell edges |
-| `outflow_scale` | 2048×2048 | Per-cell fraction of its outflow it can afford |
+Every window texture is 3072 × 3072 (`WINDOW_DIM`) and holds the nine window
+chunks:
 
-**World ↔ cell mapping:**
+| Texture | Purpose |
+|---------|---------|
+| `water` | Water depth in metres, updated in place |
+| `base_height` | Terrain height in metres |
+| `flow_x` | Flow across each cell's −x edge |
+| `flow_y` | Flow across each cell's −z edge |
+| `outflow_scale` | Per-cell fraction of its outflow it can afford |
+
+**World ↔ cell ↔ texel mapping:**
 ```
-cell = world_xz * CELLS_PER_METER + DIM / 2
+world_cell = world_xz * CELLS_PER_METER + WORLD_CHUNKS * CHUNK_DIM / 2
+chunk      = world_cell / CHUNK_DIM
+texel      = world_cell mod WINDOW_DIM
 ```
-Texel `i` holds the height at the corner `(i - DIM/2) / CELLS_PER_METER`. The
-terrain collider puts its samples on those same corners.
+A chunk's slot in the textures is its coordinate mod 3 on each axis, so the
+window origin alone says where every window chunk is, and a neighbour across a
+chunk seam is the next texel. Shaders clamp each cell to the window before
+mapping it, so reads past the window repeat its edge. World cell `c` holds the
+height at the corner `(c - WORLD_CHUNKS * CHUNK_DIM / 2) / CELLS_PER_METER`;
+each chunk's terrain collider puts its samples on those same corners and shares
+its seam row and column with its neighbours.
+
+## Chunk window
+
+`ChunkLayout` holds the window's lower chunk. Each frame `shift_window` checks,
+per axis, whether the camera is more than `SHIFT_OVERLAP_METRES` (10 m) outside
+the centre chunk; if so the window re-centres on the camera's chunk, clamped to
+the world.
+
+Each chunk that leaves hands its slot to the chunk entering into the same slot;
+the chunks that stay are never touched. For each such swap, in one command
+encoder before the sim and before the frame is drawn:
+
+1. the leaving chunk's water is copied into a staging buffer,
+2. the entering chunk's terrain and water are copied into the slot,
+3. the slot's flows are zeroed.
+
+The staging buffer is read back to the CPU and stored in `WorldChunks`, which
+keeps every chunk's terrain and its last water. The window does not move again
+until every readback is in, so a chunk never re-enters before its water is
+back. A chunk outside the window is not simulated, and re-enters with zero
+flow.
+
+Physics objects outside the window are `Parked`: their rigid body and collider
+are disabled and they are hidden, until the window covers them again. Only the
+window chunks' colliders are enabled.
 
 ## Architecture
 
@@ -64,14 +101,15 @@ One pipeline, the pass selected by an immediate (`SimParams.id`):
 0. **Flows** — each interior edge: `f = f * damping + dh * acceleration`,
    with `dh` the difference in water surface (ground + water) clamped to the
    water in the source cell, plus the push of the nearest submerged object
-   at the edge's midpoint. Border edges are walls (zero flow).
+   at the edge's midpoint. Within `EDGE_FADE_CELLS` (100) cells of the
+   window's border the flow is scaled down linearly, to zero on the border.
 1. **Outflow scale** — per cell, `min(1, water / total outflow)`.
 2. **Limit flows** — every edge's flow is multiplied by the outflow scale of
    the cell it drains, so no cell gives away more than it holds. This keeps
-   the total volume constant.
+   the total volume inside the window constant.
 3. **Heights** — each cell adds its net inflow, in place.
 4. **Sample** (once per frame) — records water depth and ground height under
-   every object for the CPU.
+   every object for the CPU; zero outside the window.
 
 ## Object Interaction
 
@@ -108,8 +146,8 @@ steps; vertex heights come from the textures in the vertex shader.
 
 ## Shared heightfield code (`src/render/heightfield.wesl`)
 
-- **Height**: bilinear between the four surrounding texels, loads past the
-  edge repeat the edge.
+- **Height**: bilinear between the four surrounding cells, each clamped to the
+  window, so loads past the window repeat its edge.
 - **Normal**: central differences one cell either side,
   `normalize((h(x-1) - h(x+1)) · 5, 1, (h(z-1) - h(z+1)) · 5)`, the 5 being
   `CELLS_PER_METER / 2`.
@@ -135,7 +173,9 @@ terrain hides it.
 
 | Parameter | Location | Effect |
 |-----------|----------|--------|
-| `DIM`, `CELLS_PER_METER` | `grid.rs` | Grid size and resolution |
+| `CHUNK_DIM`, `WORLD_CHUNKS`, `WINDOW_CHUNKS`, `CELLS_PER_METER` | `grid.rs` | Chunk and world size, window size, resolution |
+| `SHIFT_OVERLAP_METRES` | `chunks.rs` | How far past the centre chunk the camera goes before the window follows |
+| `EDGE_FADE_CELLS` | `water_sim/mod.rs` | Width of the flow fade at the window border |
 | `STEP_SECONDS`, `MAX_STEPS_PER_FRAME` | `water_sim/mod.rs` | Sim rate, catch-up limit |
 | `acceleration` (0.118) | `water.wesl` | Flow gained per step from a height difference |
 | `damping` (0.99) | `water.wesl` | Flow kept from the previous step |

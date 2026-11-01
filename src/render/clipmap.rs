@@ -1,3 +1,6 @@
+//! The camera-following clipmap mesh the terrain and the water are drawn
+//! with, and the materials that displace it onto their heightfields.
+
 use bevy::{
     asset::{AssetPath, RenderAssetUsages, embedded_path},
     mesh::PrimitiveTopology,
@@ -7,12 +10,17 @@ use bevy::{
     shader::ShaderRef,
 };
 
+/// The entity the clipmaps and the chunk window follow. The systems that
+/// follow it do nothing unless exactly one exists.
 #[derive(Component)]
 pub struct FollowTerrainMarker;
 
+/// A clipmap mesh that [`follow`] keeps under the [`FollowTerrainMarker`].
 #[derive(Component)]
 pub struct ClipmapMarker;
 
+/// Moves every [`ClipmapMarker`] entity under the [`FollowTerrainMarker`]
+/// entity, snapped down to 10 m steps on x and z.
 pub fn follow(
     following: Single<&Transform, (With<FollowTerrainMarker>, Without<ClipmapMarker>)>,
     mut terrain: Query<&mut Transform, With<ClipmapMarker>>,
@@ -23,6 +31,9 @@ pub fn follow(
     }
 }
 
+/// Shape of a clipmap mesh: a centre block of `smallest_quad_count` x
+/// `smallest_quad_count` quads of side `smallest_quad` metres, surrounded by
+/// `rings` rings, each with quads twice the size of the one inside it.
 #[derive(Component)]
 pub struct TerrainHeightMapMesh {
     pub smallest_quad: f32,
@@ -289,6 +300,10 @@ impl QuadMeshBuilder {
 }
 
 impl TerrainHeightMapMesh {
+    /// The flat clipmap mesh centred on the origin, every height zero for the
+    /// vertex shaders to displace.
+    ///
+    /// Panics unless `smallest_quad_count` is a multiple of 4.
     pub fn create_base_mesh(&self) -> Mesh {
         assert!(self.smallest_quad_count % 4 == 0);
         let mut m = QuadMeshBuilder::empty();
@@ -347,6 +362,9 @@ impl TerrainHeightMapMesh {
     }
 }
 
+/// Displaces a clipmap onto the water surface. `water` is the depth texture
+/// the simulation updates in place and `base` the terrain heights, both window
+/// textures; `window_origin` is the window's lower chunk.
 #[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
 pub struct WaterTerrainMaterial {
     #[texture(100, visibility(vertex, fragment))]
@@ -355,6 +373,8 @@ pub struct WaterTerrainMaterial {
     #[texture(102, visibility(vertex, fragment))]
     #[sampler(103, visibility(vertex, fragment))]
     pub base: Handle<Image>,
+    #[uniform(104, visibility(vertex, fragment))]
+    pub window_origin: UVec2,
 }
 
 impl MaterialExtension for WaterTerrainMaterial {
@@ -396,11 +416,15 @@ impl MaterialExtension for WaterTerrainMaterial {
     // }
 }
 
+/// Displaces a clipmap onto the terrain. `height` is the terrain's window
+/// texture and `window_origin` the window's lower chunk.
 #[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
 pub struct TerrainMaterial {
     #[texture(100, visibility(vertex, fragment))]
     #[sampler(101, visibility(vertex, fragment))]
     pub height: Handle<Image>,
+    #[uniform(104, visibility(vertex, fragment))]
+    pub window_origin: UVec2,
 }
 
 impl MaterialExtension for TerrainMaterial {

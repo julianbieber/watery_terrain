@@ -12,6 +12,7 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var water_height_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var base_height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var base_height_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var<uniform> window_origin: vec2u;
 
 const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
 
@@ -20,23 +21,23 @@ struct Column {
     ground: f32,
 }
 
-fn column(texel: vec2i) -> Column {
-    let clamped = heightfield::clamp_texel(texel, textureDimensions(water_height_texture));
+fn column(cell: vec2i) -> Column {
+    let texel = grid::window_texel(cell, window_origin);
     return Column(
-        textureLoad(water_height_texture, clamped, 0).r,
-        textureLoad(base_height_texture, clamped, 0).r,
+        textureLoad(water_height_texture, texel, 0).r,
+        textureLoad(base_height_texture, texel, 0).r,
     );
 }
 
-fn surface(texel: vec2i) -> f32 {
-    let c = column(texel);
+fn surface(cell: vec2i) -> f32 {
+    let c = column(cell);
     return c.water + c.ground;
 }
 
 // Height the water is drawn at: its surface where there is water, just
 // below the terrain where there is none, so dry ground hides it.
-fn drawn(texel: vec2i) -> f32 {
-    let c = column(texel);
+fn drawn(cell: vec2i) -> f32 {
+    let c = column(cell);
     if c.water <= DRY_DEPTH {
         return c.ground - 0.1;
     }
@@ -64,7 +65,7 @@ fn sample_drawn(cell: vec2f) -> f32 {
 }
 
 fn get_height(world_xz: vec2f) -> vec4f {
-    let cell = grid::cell_position(world_xz, textureDimensions(water_height_texture));
+    let cell = grid::world_cell(world_xz);
     let n = heightfield::normal(
         sample_surface(cell - vec2f(1.0, 0.0)),
         sample_surface(cell + vec2f(1.0, 0.0)),
