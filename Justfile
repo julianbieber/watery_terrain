@@ -96,6 +96,10 @@ wesl-deps:
 	    f"const {name}: u32 = {value};" for name, value in [
 	        ("MATERIAL_BIND_GROUP", 3),
 	        ("CELLS_PER_METER", 10),
+	        ("CHUNK_DIM", 1024),
+	        ("WORLD_CHUNKS", 6),
+	        ("WINDOW_CHUNKS", 3),
+	        ("EDGE_FADE_CELLS", 100),
 	        ("WORKGROUP_SIZE", 8),
 	        ("MAX_DISPLACEMENTS", 64),
 	        ("DRY_DEPTH_MM", 10),
