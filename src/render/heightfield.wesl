@@ -1,10 +1,10 @@
-// Surface geometry of a heightfield drawn from a grid texture, shared by the
+// Surface geometry of a heightfield drawn from a window texture, shared by the
 // terrain and the water.
 
 import package::grid;
 
-// The texel at or below continuous cell coordinates and how far past it they
-// lie, for interpolating between that texel and the three after it.
+// The world cell at or below continuous cell coordinates and how far past it
+// they lie, for interpolating between that cell and the three after it.
 struct Corners {
     origin: vec2i,
     fraction: vec2f,
@@ -15,28 +15,22 @@ fn corners(cell: vec2f) -> Corners {
     return Corners(vec2i(origin), cell - origin);
 }
 
-// `texel` moved onto the nearest texel of a `dims` texture, so loads past the
-// edge repeat the edge.
-fn clamp_texel(texel: vec2i, dims: vec2u) -> vec2i {
-    return clamp(texel, vec2i(0), vec2i(dims) - 1);
-}
-
 // Bilinear interpolation of the heights at `origin`, `origin + x`,
 // `origin + z` and `origin + x + z`, in that order.
 fn mix_corners(heights: vec4f, fraction: vec2f) -> f32 {
     return mix(mix(heights.x, heights.y, fraction.x), mix(heights.z, heights.w, fraction.x), fraction.y);
 }
 
-// Height of `heights` at continuous cell coordinates `cell`, interpolated
-// between the four surrounding texels.
-fn sample(heights: texture_2d<f32>, cell: vec2f) -> f32 {
+// Height of the window texture `heights` at continuous world cell coordinates
+// `cell`, interpolated between the four surrounding cells, each clamped to the
+// window whose lower chunk is `window_origin`.
+fn sample(heights: texture_2d<f32>, cell: vec2f, window_origin: vec2u) -> f32 {
     let c = corners(cell);
-    let dims = textureDimensions(heights);
     return mix_corners(vec4f(
-        textureLoad(heights, clamp_texel(c.origin, dims), 0).r,
-        textureLoad(heights, clamp_texel(c.origin + vec2i(1, 0), dims), 0).r,
-        textureLoad(heights, clamp_texel(c.origin + vec2i(0, 1), dims), 0).r,
-        textureLoad(heights, clamp_texel(c.origin + vec2i(1, 1), dims), 0).r,
+        textureLoad(heights, grid::window_texel(c.origin, window_origin), 0).r,
+        textureLoad(heights, grid::window_texel(c.origin + vec2i(1, 0), window_origin), 0).r,
+        textureLoad(heights, grid::window_texel(c.origin + vec2i(0, 1), window_origin), 0).r,
+        textureLoad(heights, grid::window_texel(c.origin + vec2i(1, 1), window_origin), 0).r,
     ), c.fraction);
 }
 

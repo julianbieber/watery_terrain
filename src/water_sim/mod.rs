@@ -1,3 +1,6 @@
+//! The shallow-water simulation over the chunk window on the GPU, and how
+//! objects push the water and are lifted by it.
+
 use avian3d::prelude::{Forces, Gravity, ReadRigidBodyForces, WriteRigidBodyForces};
 use bevy::{
     asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
@@ -5,27 +8,40 @@ use bevy::{
     pbr::ExtendedMaterial,
     prelude::*,
     render::{
-        Render, RenderApp, RenderStartup, RenderSystems,
+        MainWorld, Render, RenderApp, RenderStartup, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         gpu_readback::{Readback, ReadbackComplete},
         render_asset::RenderAssets,
         render_resource::{
-            BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-            CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
-            PipelineCache, ShaderStages, ShaderType, StorageBuffer, TextureDimension,
-            TextureFormat, TextureUsages,
+            BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
+            BufferDescriptor, BufferInitDescriptor, BufferUsages, CachedComputePipelineId,
+            ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, Origin3d, PipelineCache,
+            ShaderStages, ShaderType, StorageBuffer, TexelCopyBufferInfo, TexelCopyBufferLayout,
+            TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat,
+            TextureUsages,
             binding_types::{storage_buffer, storage_buffer_read_only, texture_storage_2d},
         },
-        renderer::{RenderContext, RenderDevice, RenderQueue},
+        renderer::{RenderContext, RenderDevice, RenderGraphSystems, RenderQueue},
         storage::{GpuShaderBuffer, ShaderBuffer},
         texture::GpuImage,
     },
     shader::ShaderDefVal,
 };
 use bytemuck::{Pod, Zeroable};
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
-use crate::{grid::DIM, render::clipmap::WaterTerrainMaterial, screens::Screen};
+use crate::{
+    chunks::{ChunkLayout, ChunkSwap, Parked, StagingBuffers, SwapQueue, park_objects},
+    grid::{CHUNK_DIM, WINDOW_CHUNKS, WINDOW_DIM},
+    render::clipmap::WaterTerrainMaterial,
+    screens::Screen,
+};
 
 const WORKGROUP_SIZE: u32 = 8;
 
@@ -46,8 +62,16 @@ const WATER_DRAG_PER_SECOND: f32 = 2.0;
 
 const MAX_DISPLACEMENTS: usize = (WORKGROUP_SIZE * WORKGROUP_SIZE) as usize;
 
+/// Cells from the window's border over which the flow fades to zero. The sim
+/// shader reads it as `constants::EDGE_FADE_CELLS`.
+pub const EDGE_FADE_CELLS: u32 = 100;
+
+/// Simulates the water drawn by the [`WaterMarker`] clipmap and its
+/// interaction with [`WaterDisplacement`] objects.
 pub struct WaterSimPlugin;
 
+/// The water clipmap. Adding it starts the simulation on the textures of the
+/// entity's [`WaterTerrainMaterial`], which the entity must already carry.
 #[derive(Component)]
 pub struct WaterMarker;
 
@@ -57,13 +81,19 @@ impl Plugin for WaterSimPlugin {
         app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
         app.add_plugins(ExtractResourcePlugin::<DisplacementBufferMain>::default());
         app.add_plugins(ExtractResourcePlugin::<WaterSimSteps>::default());
+        app.add_plugins(ExtractResourcePlugin::<ChunkLayout>::default());
+        app.add_plugins(ExtractResourcePlugin::<StagingBuffers>::default());
+        let ready = ChunkGpuReady::default();
+        app.insert_resource(ready.clone());
         app.init_resource::<WaterSimSteps>();
         app.add_systems(Update, count_sim_steps);
         app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
         app.init_resource::<WaterAtObjects>();
         app.add_systems(
             Update,
-            collect_displacements.run_if(in_state(Screen::Gameplay)),
+            collect_displacements
+                .after(park_objects)
+                .run_if(in_state(Screen::Gameplay)),
         );
         app.add_systems(
             FixedUpdate,
@@ -71,9 +101,14 @@ impl Plugin for WaterSimPlugin {
         );
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
+        render_app.insert_resource(ready);
+        render_app.init_resource::<ExtractedSwaps>();
+        render_app.add_systems(ExtractSchedule, extract_swaps);
         render_app.add_systems(
             Render,
-            prepare_water_bindgroups.in_set(RenderSystems::PrepareBindGroups),
+            (prepare_water_bindgroups, mark_chunks_ready)
+                .chain()
+                .in_set(RenderSystems::PrepareBindGroups),
         );
         render_app.insert_resource(DisplacementBuffer {
             buffer: StorageBuffer::from(Displacements {
@@ -81,12 +116,20 @@ impl Plugin for WaterSimPlugin {
                 items: [Displacement::default(); MAX_DISPLACEMENTS],
             }),
         });
-        render_app.add_systems(RenderGraph, run_water_sim);
+        render_app.add_systems(
+            RenderGraph,
+            (swap_chunks, run_water_sim)
+                .chain()
+                .in_set(RenderGraphSystems::Begin),
+        );
 
         app.add_observer(init_internal_textures);
     }
 }
 
+/// An object that pushes water away and is lifted by it: `radius` is its reach
+/// in metres, `strength` scales its push. Only the first 64 such objects take
+/// part.
 #[derive(Component)]
 pub struct WaterDisplacement {
     pub radius: f32,
@@ -115,7 +158,7 @@ fn submerged_fraction(column: &WaterColumn, transform: &Transform, radius: f32) 
 }
 
 fn collect_displacements(
-    d: Query<(Entity, &Transform, &WaterDisplacement)>,
+    d: Query<(Entity, &Transform, &WaterDisplacement), Without<Parked>>,
     mut buffer: ResMut<DisplacementBufferMain>,
     water: Res<WaterAtObjects>,
 ) {
@@ -135,7 +178,7 @@ fn collect_displacements(
 }
 
 fn apply_buoyancy(
-    mut bodies: Query<(Entity, Forces, &Transform, &WaterDisplacement)>,
+    mut bodies: Query<(Entity, Forces, &Transform, &WaterDisplacement), Without<Parked>>,
     water: Res<WaterAtObjects>,
     gravity: Res<Gravity>,
 ) {
@@ -199,7 +242,9 @@ fn run_water_sim(
     pipeline_cache: If<Res<PipelineCache>>,
     bind_group: If<Res<WaterBindGroup>>,
     steps: If<Res<WaterSimSteps>>,
+    layout: If<Res<ChunkLayout>>,
 ) {
+    let window_origin = layout.origin_uvec();
     let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
         return;
     };
@@ -210,14 +255,15 @@ fn run_water_sim(
     pass.set_bind_group(0, &bind_group.0.0, &[]);
     pass.set_pipeline(update_pipeline);
 
-    let workgroups = (DIM + 1).div_ceil(WORKGROUP_SIZE);
+    let workgroups = WINDOW_DIM.div_ceil(WORKGROUP_SIZE);
     for _ in 0..steps.0.due {
         for id in [0, 1, 2, 3] {
             pass.set_immediates(
                 0,
                 bytemuck::bytes_of(&SimParams {
                     id,
-                    _pad: Vec3::ZERO,
+                    _pad: 0,
+                    window_origin,
                 }),
             );
             pass.dispatch_workgroups(workgroups, workgroups, 1);
@@ -228,7 +274,8 @@ fn run_water_sim(
         0,
         bytemuck::bytes_of(&SimParams {
             id: 4,
-            _pad: Vec3::ZERO,
+            _pad: 0,
+            window_origin,
         }),
     );
     pass.dispatch_workgroups(1, 1, 1);
@@ -238,7 +285,8 @@ fn run_water_sim(
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct SimParams {
     id: i32,
-    _pad: Vec3,
+    _pad: u32,
+    window_origin: UVec2,
 }
 
 fn init_internal_textures(
@@ -257,9 +305,9 @@ fn init_internal_textures(
     info!("adding internal water tex");
     let material = material.get(trigger.entity).unwrap();
     let material = water_terrain_materials.get(material.0.id()).unwrap();
-    let flow_x = images.add(zeroed_storage_texture(DIM + 1, DIM));
-    let flow_y = images.add(zeroed_storage_texture(DIM, DIM + 1));
-    let outflow_scale = images.add(zeroed_storage_texture(DIM, DIM));
+    let flow_x = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
+    let flow_y = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
+    let outflow_scale = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
     let samples = buffers.add(ShaderBuffer::with_size(
         WaterSamples::min_size().get(),
         RenderAssetUsages::RENDER_WORLD,
@@ -341,6 +389,7 @@ fn init_water_render(
         shader_defs: vec![
             ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE),
             ShaderDefVal::UInt("MAX_DISPLACEMENTS".into(), MAX_DISPLACEMENTS as u32),
+            ShaderDefVal::UInt("EDGE_FADE_CELLS".into(), EDGE_FADE_CELLS),
         ],
         immediate_size: std::mem::size_of::<SimParams>() as u32,
         ..Default::default()
@@ -401,6 +450,9 @@ fn prepare_water_bindgroups(
     commands.insert_resource(WaterBindGroup(bind_group));
 }
 
+/// The textures the simulation reads and writes, all window textures, and
+/// the buffer the per-object samples are read back through. Present once the
+/// water clipmap exists.
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct WaterHeightTexture {
@@ -457,4 +509,148 @@ impl Default for WaterSamples {
 #[derive(Resource)]
 struct DisplacementBuffer {
     buffer: StorageBuffer<Displacements>,
+}
+
+/// Whether the window textures, the sim bind group and every staging buffer
+/// are on the GPU, so a window shift can be applied the frame it is queued.
+/// Shared by the main and the render world.
+#[derive(Resource, Clone, Default)]
+pub struct ChunkGpuReady(Arc<AtomicBool>);
+
+impl ChunkGpuReady {
+    pub fn is_ready(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+fn mark_chunks_ready(
+    ready: Res<ChunkGpuReady>,
+    bind_group: Option<Res<WaterBindGroup>>,
+    staging: Option<Res<StagingBuffers>>,
+    gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
+) {
+    let all_there = bind_group.is_some()
+        && staging.is_some_and(|s| s.buffers.iter().all(|b| gpu_buffers.get(b).is_some()));
+    ready.0.store(all_there, Ordering::Relaxed);
+}
+
+#[derive(Resource, Default)]
+struct ExtractedSwaps(Vec<ChunkSwap>);
+
+fn extract_swaps(mut main_world: ResMut<MainWorld>, mut extracted: ResMut<ExtractedSwaps>) {
+    if let Some(mut queue) = main_world.get_resource_mut::<SwapQueue>()
+        && !queue.swaps.is_empty()
+    {
+        extracted.0.append(&mut queue.swaps);
+    }
+}
+
+const CHUNK_BYTES_PER_ROW: u32 = CHUNK_DIM * 4;
+
+fn chunk_extent() -> Extent3d {
+    Extent3d {
+        width: CHUNK_DIM,
+        height: CHUNK_DIM,
+        depth_or_array_layers: 1,
+    }
+}
+
+fn chunk_layout_in_buffer() -> TexelCopyBufferLayout {
+    TexelCopyBufferLayout {
+        offset: 0,
+        bytes_per_row: Some(CHUNK_BYTES_PER_ROW),
+        rows_per_image: Some(CHUNK_DIM),
+    }
+}
+
+fn slot_region(texture: &Texture, slot: Origin3d) -> TexelCopyTextureInfo<'_> {
+    TexelCopyTextureInfo {
+        texture,
+        mip_level: 0,
+        origin: slot,
+        aspect: TextureAspect::All,
+    }
+}
+
+fn swap_chunks(
+    mut render_context: RenderContext,
+    mut swaps: ResMut<ExtractedSwaps>,
+    water_images: Option<Res<WaterHeightTexture>>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
+    mut zeros: Local<Option<Buffer>>,
+) {
+    if swaps.0.is_empty() {
+        return;
+    }
+    let water_images = water_images.expect("chunk swap queued before the water textures exist");
+    let texture = |handle: &Handle<Image>| {
+        gpu_images
+            .get(handle)
+            .expect("chunk swap queued before the window textures are on the GPU")
+            .texture
+            .clone()
+    };
+    let water = texture(&water_images.water);
+    let base = texture(&water_images.base_height);
+    let flows = [
+        texture(&water_images.flow_x),
+        texture(&water_images.flow_y),
+        texture(&water_images.outflow_scale),
+    ];
+    let device = render_context.render_device().clone();
+    let zeros = zeros
+        .get_or_insert_with(|| {
+            device.create_buffer(&BufferDescriptor {
+                label: Some("zero chunk"),
+                size: u64::from(CHUNK_BYTES_PER_ROW) * u64::from(CHUNK_DIM),
+                usage: BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        })
+        .clone();
+
+    for swap in swaps.0.drain(..) {
+        let staging = gpu_buffers
+            .get(&swap.staging)
+            .expect("chunk swap queued before its staging buffer is on the GPU");
+        debug!(leaving = ?swap.leaving, entering = ?swap.entering, "swapping chunk");
+        let span = WINDOW_CHUNKS as i32;
+        let slot = Origin3d {
+            x: swap.entering.x.rem_euclid(span) as u32 * CHUNK_DIM,
+            y: swap.entering.z.rem_euclid(span) as u32 * CHUNK_DIM,
+            z: 0,
+        };
+        let upload = |contents: &[f32], label: &str| {
+            device.create_buffer_with_data(&BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(contents),
+                usage: BufferUsages::COPY_SRC,
+            })
+        };
+        let terrain = upload(&swap.terrain, "entering chunk terrain");
+        let entering_water = upload(&swap.water, "entering chunk water");
+        let encoder = render_context.command_encoder();
+        encoder.copy_texture_to_buffer(
+            slot_region(&water, slot),
+            TexelCopyBufferInfo {
+                buffer: &staging.buffer,
+                layout: chunk_layout_in_buffer(),
+            },
+            chunk_extent(),
+        );
+        for (source, target) in [(&terrain, &base), (&entering_water, &water)]
+            .into_iter()
+            .chain(flows.iter().map(|flow| (&zeros, flow)))
+        {
+            encoder.copy_buffer_to_texture(
+                TexelCopyBufferInfo {
+                    buffer: source,
+                    layout: chunk_layout_in_buffer(),
+                },
+                slot_region(target, slot),
+                chunk_extent(),
+            );
+        }
+    }
 }

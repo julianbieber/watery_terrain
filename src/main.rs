@@ -1,3 +1,5 @@
+//! Entry point: builds the app from the game's plugins and runs it.
+
 #![recursion_limit = "256"]
 
 use bevy::{
@@ -14,9 +16,11 @@ use bevy_sky_gradient::{
 };
 
 use crate::{
-    grid::GridPlugin, render::TerrainRanderPlugin, screens::ScreenPlugin, water_sim::WaterSimPlugin,
+    chunks::ChunkPlugin, grid::GridPlugin, render::TerrainRanderPlugin, screens::ScreenPlugin,
+    water_sim::WaterSimPlugin,
 };
 
+mod chunks;
 mod gameplay;
 mod grid;
 mod heightmap;
@@ -80,6 +84,7 @@ fn main() -> AppExit {
             FeathersPlugins,
             ScreenPlugin,
             GridPlugin,
+            ChunkPlugin,
             WaterSimPlugin,
             TerrainRanderPlugin,
         ))

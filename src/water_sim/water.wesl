@@ -1,3 +1,9 @@
+// The shallow-water simulation over the active window, one pass per dispatch
+// selected by `SimParams.id`, plus the pass that samples the water under each
+// displacement for the CPU. Every texture holds the window's chunks at their
+// world cells modulo WINDOW_DIM; a cell's flow texels hold the flow across its
+// own -x and -z edges.
+
 import package::grid;
 
 @group(0) @binding(0) var water: texture_storage_2d<r32float, read_write>;
@@ -36,38 +42,69 @@ struct WaterSamples {
 
 @group(0) @binding(6) var<storage, read_write> samples: WaterSamples;
 
-
 struct SimParams {
     id: i32,
-    _pad: vec3f,
+    window_origin: vec2u,
 };
 var<immediate> sim: SimParams;
 
-// -------- helpers --------
+const WINDOW: i32 = i32(grid::WINDOW_DIM);
 
-// returns base and water height separately
-fn get_height(location: vec2i) -> vec2f {
-    return vec2f(textureLoad(base_height_texture, location).x,textureLoad(water, location).x);
+// Texel of the window cell `cell`, counted from the window's first cell.
+fn texel(cell: vec2i) -> vec2u {
+    return grid::window_texel(grid::window_first_cell(sim.window_origin) + cell, sim.window_origin);
 }
 
-fn set_height(location: vec2i, v: f32) {
-    textureStore(water, location, vec4f(v, 0.0, 0.0, 0.0));
+// World position of continuous window cell coordinates `cell`.
+fn world_of_window(cell: vec2f) -> vec2f {
+    return grid::world_of_cell(vec2f(grid::window_first_cell(sim.window_origin)) + cell);
 }
 
+fn in_window(cell: vec2i) -> bool {
+    return all(cell >= vec2i(0)) && all(cell < vec2i(WINDOW));
+}
+
+// Ground and water height of a window cell.
+fn get_height(cell: vec2i) -> vec2f {
+    let t = texel(cell);
+    return vec2f(textureLoad(base_height_texture, t).x, textureLoad(water, t).x);
+}
+
+fn set_height(cell: vec2i, v: f32) {
+    textureStore(water, texel(cell), vec4f(v, 0.0, 0.0, 0.0));
+}
+
+// Flow across the -x edge of window cell `edge`, positive towards +x; zero on
+// the window border and beyond, whose cells are not simulated.
 fn get_flow_x(edge: vec2i) -> f32 {
-    return textureLoad(flow_x, edge).x;
+    if edge.x <= 0 || edge.x >= WINDOW || edge.y < 0 || edge.y >= WINDOW {
+        return 0.0;
+    }
+    return textureLoad(flow_x, texel(edge)).x;
 }
 
+// Flow across the -z edge of window cell `edge`, positive towards +z; zero on
+// the window border and beyond.
 fn get_flow_y(edge: vec2i) -> f32 {
-    return textureLoad(flow_y, edge).x;
+    if edge.y <= 0 || edge.y >= WINDOW || edge.x < 0 || edge.x >= WINDOW {
+        return 0.0;
+    }
+    return textureLoad(flow_y, texel(edge)).x;
 }
 
 fn set_flow_x(edge: vec2i, v: f32) {
-    textureStore(flow_x, edge, vec4f(v, 0.0, 0.0, 0.0));
+    textureStore(flow_x, texel(edge), vec4f(v, 0.0, 0.0, 0.0));
 }
 
 fn set_flow_y(edge: vec2i, v: f32) {
-    textureStore(flow_y, edge, vec4f(v, 0.0, 0.0, 0.0));
+    textureStore(flow_y, texel(edge), vec4f(v, 0.0, 0.0, 0.0));
+}
+
+// Factor a flow through window point `p` is scaled by: one further than
+// EDGE_FADE_CELLS from the window border, falling linearly to zero on it.
+fn edge_fade(p: vec2f) -> f32 {
+    let to_border = min(p, vec2f(f32(WINDOW)) - p);
+    return clamp(min(to_border.x, to_border.y) / f32(constants::EDGE_FADE_CELLS), 0.0, 1.0);
 }
 
 struct DisplacementResult {
@@ -110,69 +147,39 @@ fn displacement_push(d: DisplacementResult, p: vec2f, axis: vec2f) -> f32 {
     return dot(offset / offset_length, axis) * circle.push;
 }
 
-// -------- pass 0: update flows on edges --------
+fn surface_drop(from_cell: vec2f, to_cell: vec2f) -> f32 {
+    let dh = (from_cell.x + from_cell.y) - (to_cell.x + to_cell.y);
+    if dh < 0.0 {
+        return -min(abs(dh), to_cell.y);
+    }
+    return min(dh, from_cell.y);
+}
 
 fn update_flows(invocation_id: vec3<u32>) {
-    let size = vec2i(textureDimensions(water)); // (W,H)
-    let x = i32(invocation_id.x);
-    let y = i32(invocation_id.y);
+    let e = vec2i(invocation_id.xy);
+    if !in_window(e) {
+        return;
+    }
 
     let acceleration = 0.118;
     let damping = 0.99;
 
-    // Horizontal edges (flow_x): (ex, y), ex in [0..W]
-    if (x <= size.x && y < size.y) {
-        let ex = x;
-        let ey = y;
-        // solid walls at domain borders
-        if (ex == 0 || ex == size.x) {
-            set_flow_x(vec2i(ex, ey), 0.0);
-        } else {
-            let left_cell  = vec2i(ex - 1, ey);
-            let right_cell = vec2i(ex,     ey);
-
-            let hL = get_height(left_cell);
-            var hR = get_height(right_cell);
-            var f = get_flow_x(vec2i(ex, ey));
-            var dh = (hL.x + hL.y) - (hR.x+hR.y);
-            if dh < 0.0 {
-                dh = -min(abs(dh), hR.y);
-            } else if dh > 0.0 {
-                dh = min(dh, hL.y);
-            }
-            f = f * damping + dh * acceleration;
-            let edge_center = grid::world_position(vec2f(f32(ex), f32(ey) + 0.5), vec2u(size));
-            f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(1.0, 0.0));
-
-            set_flow_x(vec2i(ex, ey), f);
-        }
+    if e.x > 0 {
+        let midpoint = vec2f(f32(e.x), f32(e.y) + 0.5);
+        var f = get_flow_x(e) * damping
+            + surface_drop(get_height(e - vec2i(1, 0)), get_height(e)) * acceleration;
+        let edge_center = world_of_window(midpoint);
+        f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(1.0, 0.0));
+        set_flow_x(e, f * edge_fade(midpoint));
     }
 
-    // Vertical edges (flow_y): (x, ey), ey in [0..H]
-    if (x < size.x && y <= size.y) {
-        let ex = x;
-        let ey = y;
-        if (ey == 0 || ey == size.y) {
-            set_flow_y(vec2i(ex, ey), 0.0);
-        } else {
-            let down_cell = vec2i(ex, ey - 1);
-            let up_cell   = vec2i(ex, ey);
-
-            let hD = get_height(down_cell);
-            var hU = get_height(up_cell);
-
-            var f = get_flow_y(vec2i(ex, ey));
-            var dh = (hD.x + hD.y) - (hU.x+hU.y);
-            if dh < 0.0 {
-                dh = -min(abs(dh), hU.y);
-            } else if dh > 0.0 {
-                dh = min(dh, hD.y);
-            }
-            f = f * damping + dh * acceleration;
-            let edge_center = grid::world_position(vec2f(f32(ex) + 0.5, f32(ey)), vec2u(size));
-            f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(0.0, 1.0));
-            set_flow_y(vec2i(ex, ey), f);
-        }
+    if e.y > 0 {
+        let midpoint = vec2f(f32(e.x) + 0.5, f32(e.y));
+        var f = get_flow_y(e) * damping
+            + surface_drop(get_height(e - vec2i(0, 1)), get_height(e)) * acceleration;
+        let edge_center = world_of_window(midpoint);
+        f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(0.0, 1.0));
+        set_flow_y(e, f * edge_fade(midpoint));
     }
 }
 
@@ -180,8 +187,7 @@ fn update_flows(invocation_id: vec3<u32>) {
 // water than they carry away, proportionally less otherwise.
 fn update_outflow_scale(invocation_id: vec3<u32>) {
     let l = vec2i(invocation_id.xy);
-    let size = vec2i(textureDimensions(water));
-    if (l.x >= size.x || l.y >= size.y) {
+    if !in_window(l) {
         return;
     }
     let outflow = max(0.0, get_flow_x(l + vec2i(1, 0))) + max(0.0, -get_flow_x(l))
@@ -191,55 +197,40 @@ fn update_outflow_scale(invocation_id: vec3<u32>) {
     if outflow > available {
         scale = available / outflow;
     }
-    textureStore(outflow_scale, l, vec4f(scale, 0.0, 0.0, 0.0));
+    textureStore(outflow_scale, texel(l), vec4f(scale, 0.0, 0.0, 0.0));
 }
 
 fn source_scale(f: f32, positive_source: vec2i, negative_source: vec2i) -> f32 {
-    return textureLoad(outflow_scale, select(negative_source, positive_source, f > 0.0)).x;
+    return textureLoad(outflow_scale, texel(select(negative_source, positive_source, f > 0.0))).x;
 }
 
 // Scales every interior edge's flow by the outflow scale of the cell it
 // drains, so no cell gives away more water than it holds.
 fn limit_flows(invocation_id: vec3<u32>) {
-    let size = vec2i(textureDimensions(water));
     let e = vec2i(invocation_id.xy);
-    if (e.x > 0 && e.x < size.x && e.y < size.y) {
+    if !in_window(e) {
+        return;
+    }
+    if e.x > 0 {
         let f = get_flow_x(e);
         set_flow_x(e, f * source_scale(f, e - vec2i(1, 0), e));
     }
-    if (e.x < size.x && e.y > 0 && e.y < size.y) {
+    if e.y > 0 {
         let f = get_flow_y(e);
         set_flow_y(e, f * source_scale(f, e - vec2i(0, 1), e));
     }
 }
 
-// -------- pass 3: update water height from net flow --------
-
 fn update_water_height(invocation_id: vec3<u32>) {
     let l = vec2i(invocation_id.xy);
-    let size = vec2i(textureDimensions(water));
-
-    if (l.x < 0 || l.y < 0 || l.x >= size.x || l.y >= size.y) {
+    if !in_window(l) {
         return;
     }
 
-    let own = get_height(l).y;
+    let net = (get_flow_x(l) - get_flow_x(l + vec2i(1, 0)))
+        + (get_flow_y(l) - get_flow_y(l + vec2i(0, 1)));
 
-    // edges around cell (x,y):
-    // flow_x(ex,y): between (ex-1,y) -> (ex,y), + is left->right
-    let fx_left  = get_flow_x(vec2i(l.x,     l.y));
-    let fx_right = get_flow_x(vec2i(l.x + 1, l.y));
-
-    // flow_y(x,ey): between (x,ey-1) -> (x,ey), + is down->up
-    let fy_down  = get_flow_y(vec2i(l.x, l.y));
-    let fy_up    = get_flow_y(vec2i(l.x, l.y + 1));
-
-    // net inflow (positive = gain)
-    let net = (fx_left - fx_right) + (fy_down - fy_up);
-
-    var new_height = max(0.0, own + net);
-
-    set_height(l, new_height);
+    set_height(l, max(0.0, get_height(l).y + net));
 }
 
 // Records the water depth and ground height under every displacement, for
@@ -253,17 +244,16 @@ fn sample_water(invocation_id: vec3<u32>) {
         return;
     }
     let displacement = displacements.items[i];
-    let dims = textureDimensions(water);
-    let cell = vec2i(floor(grid::cell_position(displacement.center, dims)));
+    let cell = vec2i(floor(grid::world_cell(displacement.center)))
+        - grid::window_first_cell(sim.window_origin);
     var sample = WaterSample(displacement.entity, 0.0, 0.0);
-    if all(cell >= vec2i(0)) && all(cell < vec2i(dims)) {
-        sample.depth = textureLoad(water, cell).x;
-        sample.ground = textureLoad(base_height_texture, cell).x;
+    if in_window(cell) {
+        let column = get_height(cell);
+        sample.depth = column.y;
+        sample.ground = column.x;
     }
     samples.items[i] = sample;
 }
-
-// -------- entry --------
 
 @compute @workgroup_size(constants::WORKGROUP_SIZE, constants::WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) invocation_id: vec3<u32>) {

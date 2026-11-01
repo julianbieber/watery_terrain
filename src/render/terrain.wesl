@@ -10,16 +10,17 @@ import bevy_pbr::render::{
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var height_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var height_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var<uniform> window_origin: vec2u;
 
 fn get_height(world_xz: vec2f) -> vec4f {
-    let cell = grid::cell_position(world_xz, textureDimensions(height_texture));
+    let cell = grid::world_cell(world_xz);
     let n = heightfield::normal(
-        heightfield::sample(height_texture, cell - vec2f(1.0, 0.0)),
-        heightfield::sample(height_texture, cell + vec2f(1.0, 0.0)),
-        heightfield::sample(height_texture, cell - vec2f(0.0, 1.0)),
-        heightfield::sample(height_texture, cell + vec2f(0.0, 1.0)),
+        heightfield::sample(height_texture, cell - vec2f(1.0, 0.0), window_origin),
+        heightfield::sample(height_texture, cell + vec2f(1.0, 0.0), window_origin),
+        heightfield::sample(height_texture, cell - vec2f(0.0, 1.0), window_origin),
+        heightfield::sample(height_texture, cell + vec2f(0.0, 1.0), window_origin),
     );
-    return vec4f(heightfield::sample(height_texture, cell), n);
+    return vec4f(heightfield::sample(height_texture, cell, window_origin), n);
 }
 
 // Upper edges of the sand, grass and rock bands in metres; snow lies above.
