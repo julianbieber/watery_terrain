@@ -14,6 +14,8 @@ use bevy::{
     render::storage::ShaderBuffer,
 };
 
+use bevy_sky_gradient::plugin::SkyboxMagnetTag;
+
 use crate::{
     chunks::{
         CHUNK_BYTES, ChunkCollider, ChunkLayout, STAGING_BUFFERS, StagingBuffers, WorldChunks,
@@ -64,7 +66,7 @@ fn spawn_player_camera(mut commands: Commands) {
             color: Color::Srgba(Srgba::RED),
             ..default()
         },
-        // SkyboxMagnetTag, // At the moment the skybox radius seems to hide the terrain
+        SkyboxMagnetTag,
     ));
 }
 
