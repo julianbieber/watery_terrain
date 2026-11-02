@@ -357,11 +357,7 @@ fn land_material(asset_server: &AssetServer) -> StandardMaterial {
     material
 }
 
-fn move_boat(
-    mut boat: Query<&mut LinearVelocity, With<WaterDisplacement>>,
-    time: Res<Time>,
-    // cam: Single<&Transform, (With<Camera>, Without<WaterDisplacement>)>,
-) {
+fn move_boat(mut boat: Query<&mut LinearVelocity, With<WaterDisplacement>>, time: Res<Time>) {
     for mut b in &mut boat {
         b.0.z = time.elapsed_secs().sin() * 3.04;
         b.0.x =
