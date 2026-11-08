@@ -44,9 +44,9 @@ fn get_height(placement: heightfield::Placement) -> vec4f {
 }
 
 // Upper edges of the sand, grass and rock bands in metres; snow lies above.
-// They sit near the quartiles of the generated terrain's heights, so each
-// material covers about a quarter of it.
-const BAND_TOPS = vec3f(4.0, 7.5, 12.0);
+// Sand is a strip above the 10 m sea level of assets/terrain, and grass and rock
+// meet at about its dry land's median height, with snow on the top quarter.
+const BAND_TOPS = vec3f(12.0, 21.0, 27.0);
 
 // The atlas column (u range) of the material at height `h`, in the order of
 // assets/output/combined/atlas.json.

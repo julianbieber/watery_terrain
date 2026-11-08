@@ -1,0 +1,59 @@
+(
+    version: 3,
+    chunk_size: (1024, 1024),
+    chunks: (6, 6),
+    layers: [
+        (
+            file: "layer_000",
+            width: 1024,
+            height: 1024,
+            channels: [
+                (
+                    low: 4.0,
+                    high: 41.18336,
+                    encoding: Linear,
+                ),
+            ],
+        ),
+        (
+            file: "layer_001",
+            width: 1024,
+            height: 1024,
+            channels: [
+                (
+                    low: 0.0,
+                    high: 6.0,
+                    encoding: Log,
+                ),
+                (
+                    low: -1.0,
+                    high: 1.0,
+                    encoding: Unit,
+                ),
+                (
+                    low: -1.0,
+                    high: 1.0,
+                    encoding: Unit,
+                ),
+                (
+                    low: 0.0,
+                    high: 35034520.0,
+                    encoding: Log,
+                ),
+            ],
+        ),
+    ],
+    fields: [
+        (
+            name: "height",
+            role: Height,
+            categorical: false,
+            layer: 0,
+            channel: 0,
+        ),
+    ],
+    water: Some((
+        lakes: 605,
+        layer: 1,
+    )),
+)

@@ -8,6 +8,7 @@ avian3d = "0.8"
 bevy = { version = "0.20", features  = ["bevy_feathers", "free_camera", "debug", "pbr_transmission_textures", "pbr_specular_textures", "pbr_multi_layer_material_textures", "pbr_anisotropy_texture"]}
 bevy_sky_gradient = { git = "https://github.com/julianbieber/bevy_sky_gradient.git", rev = "7c37d591f42383a3719769dfbd3408e53294d7d2" }
 bytemuck = { version = "1.25.0", features = ["derive"] }
+watershed = { git = "https://github.com/julianbieber/watershed.git", rev = "29ce1ffc89ea79392cf464082bed4708cdaed651" }
 # Set max log levels. This helps avoid unwanted low-severity log spam, which can affect performance.
 log = { version = "0.4", features = [
     "max_level_debug",

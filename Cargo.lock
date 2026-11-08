@@ -6182,6 +6182,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "watershed"
+version = "0.1.0"
+source = "git+https://github.com/julianbieber/watershed.git?rev=29ce1ffc89ea79392cf464082bed4708cdaed651#29ce1ffc89ea79392cf464082bed4708cdaed651"
+dependencies = [
+ "glam 0.33.12",
+ "png",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "watery_terrain"
 version = "0.1.0"
 dependencies = [
@@ -6191,6 +6203,7 @@ dependencies = [
  "bytemuck",
  "log",
  "tracing",
+ "watershed",
 ]
 
 [[package]]
