@@ -123,6 +123,7 @@ fn spawn_plane_dbg(
                 water: heightmap_texture.clone(),
                 base: rock_heightmap_texture.clone(),
                 window_origin: layout.origin_uvec(),
+                shape: clipmap.shader_shape(),
             },
         })),
     ));
@@ -137,6 +138,7 @@ fn spawn_plane_dbg(
                 extension: TerrainMaterial {
                     height: rock_heightmap_texture,
                     window_origin: layout.origin_uvec(),
+                    shape: clipmap.shader_shape(),
                 },
             }),
         ),

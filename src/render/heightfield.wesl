@@ -34,6 +34,56 @@ fn sample(heights: texture_2d<f32>, cell: vec2f, window_origin: vec2u) -> f32 {
     ), c.fraction);
 }
 
+// Layout of the clipmap mesh: the grid in metres its centre stays on, and a
+// level's half width divided by its quad size.
+struct Shape {
+    snap_step: f32,
+    half_quads: f32,
+}
+
+// A clipmap vertex placed in the world. `quad` is the quad size of its level
+// and `blend` how far its surface has gone towards the next-coarser level.
+struct Placement {
+    world_xz: vec2f,
+    quad: f32,
+    blend: f32,
+}
+
+// The share of a level's half width over which it turns into the next level.
+const TRANSITION_SHARE: f32 = 0.25;
+
+// Places the vertex at `local_xz` of a clipmap whose model matrix sits on the
+// viewer. `blend` reaches 1 at the level's outer edge and stays 0 at its inner
+// edge wherever the viewer is within a snap step.
+fn place(model: mat4x4<f32>, local_xz: vec2f, quad: f32, shape: Shape) -> Placement {
+    let viewer = model[3].xz;
+    let world_xz = local_xz + round(viewer / shape.snap_step) * shape.snap_step;
+    let from_viewer = abs(world_xz - viewer);
+    let half_width = quad * shape.half_quads;
+    let width = half_width * TRANSITION_SHARE;
+    let start = half_width - shape.snap_step * 0.5 - width;
+    let blend = clamp((max(from_viewer.x, from_viewer.y) - start) / width, 0.0, 1.0);
+    return Placement(world_xz, quad, blend);
+}
+
+// Distance in cells from `placement` to the next-coarser level's vertices that
+// predict its height, per axis. Zero where it has none to move towards.
+fn coarse_offset(placement: Placement) -> vec2f {
+    let quad_cells = placement.quad * grid::CELLS_PER_METER;
+    if placement.blend <= 0.0 || quad_cells < 1.0 {
+        return vec2f(0.0);
+    }
+    let index = round(placement.world_xz / placement.quad);
+    return (index - 2.0 * floor(index * 0.5)) * quad_cells;
+}
+
+// Distance in cells to the heights a vertex's normal is taken from: the spacing
+// of the surface the level draws there, never under a cell.
+fn normal_step(placement: Placement) -> f32 {
+    let quad_cells = placement.quad * grid::CELLS_PER_METER;
+    return max(1.0, quad_cells * (1.0 + placement.blend));
+}
+
 const NORMAL_MAP_STRENGTH: f32 = 0.11;
 
 const TEXTURE_REPEAT_METRES: f32 = 51.2;
@@ -52,9 +102,9 @@ fn tangent(normal: vec3f) -> vec4f {
     return vec4f(normalize(vec3f(normal.y, -normal.x, 0.0)) * NORMAL_MAP_STRENGTH, 1.0);
 }
 
-// Unit normal of the surface from its heights one cell to either side of a
+// Unit normal of the surface from its heights `step` cells to either side of a
 // point along world x (`x_minus`, `x_plus`) and world z (`z_minus`, `z_plus`).
-fn normal(x_minus: f32, x_plus: f32, z_minus: f32, z_plus: f32) -> vec3f {
-    let per_metre = grid::CELLS_PER_METER * 0.5;
+fn normal(x_minus: f32, x_plus: f32, z_minus: f32, z_plus: f32, step: f32) -> vec3f {
+    let per_metre = grid::CELLS_PER_METER * 0.5 / step;
     return normalize(vec3f((x_minus - x_plus) * per_metre, 1.0, (z_minus - z_plus) * per_metre));
 }

@@ -141,16 +141,23 @@ clamped to [0, 1]. Water at or below `DRY_DEPTH_MM` (10 mm) counts as dry.
 
 Terrain and water each use a clipmap mesh (`TerrainHeightMapMesh`): a central
 region of 160 × 160 quads of 0.05 m and 5 rings, each doubling the quad size,
-with triple-split quads at the LOD seams. The mesh follows the camera in 10 m
-steps; vertex heights come from the textures in the vertex shader.
+with triple-split quads at the LOD seams. Vertices are shared and carry their
+level's quad size in their first UV coordinate.
+
+The mesh transform sits on the camera. The vertex shaders snap the mesh to its
+coarsest quad size, 1.6 m, so every ring's vertices keep their world positions.
+Over the outer quarter of each level, heights and normals blend towards the
+next-coarser level, reaching it at the level's edge, so a ring changes level
+without a jump. Vertex heights come from the textures in the vertex shader.
 
 ## Shared heightfield code (`src/render/heightfield.wesl`)
 
 - **Height**: bilinear between the four surrounding cells, each clamped to the
   window, so loads past the window repeat its edge.
-- **Normal**: central differences one cell either side,
-  `normalize((h(x-1) - h(x+1)) · 5, 1, (h(z-1) - h(z+1)) · 5)`, the 5 being
-  `CELLS_PER_METER / 2`.
+- **Normal**: central differences `s` cells either side,
+  `normalize((h(x-s) - h(x+s)) · 5/s, 1, (h(z-s) - h(z+s)) · 5/s)`, the 5 being
+  `CELLS_PER_METER / 2` and `s` the spacing of the surface the level draws, at
+  least one cell.
 - **Tangent**: the surface direction along +x (where u grows), `w = 1`, length
   0.11 to damp the normal maps evenly.
 - **UV**: `world_xz / 51.2 m`.
