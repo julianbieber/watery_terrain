@@ -1,3 +1,5 @@
+//! Draws the terrain and water surfaces.
+
 pub mod clipmap;
 
 use bevy::{
