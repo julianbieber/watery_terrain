@@ -128,6 +128,7 @@ run:
 
 # Run web via Bevy CLI
 # Bevy CLI handles building to wasm32-unknown-unknown and serving locally.
+# Panics at startup: a browser has no file system to read assets/terrain from.
 run-web:
 	@env \
 	RUSTFLAGS="{{RUSTFLAGS_BASE}}" \

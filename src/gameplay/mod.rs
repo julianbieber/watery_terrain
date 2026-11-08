@@ -99,7 +99,7 @@ fn spawn_plane_dbg(
         smallest_quad_count: 16 * 10,
     };
 
-    let world = WorldChunks::generate();
+    let world = WorldChunks::load();
     let layout = ChunkLayout::centred_on(chunk_of(CAMERA_SPAWN.xz()));
     let window_image = |water: bool| {
         let mut image = world.window_heightmap(&layout, water).image();

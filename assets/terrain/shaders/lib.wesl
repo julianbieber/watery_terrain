@@ -1,0 +1,186 @@
+// The watershed editor overwrites this file whenever a document is opened or created; edits here are lost.
+// What every layer's shader is compiled against: the bindings a dispatch supplies, and
+// the noise primitives a shader is expected to reach for.
+//
+// A layer imports what it uses from `package::lib`; nothing here is available to a
+// layer without that import. The Rust half of this file is `gpu.rs`, which writes
+// `Globals` out as `DispatchGlobals`. A change here is a change there.
+
+// Everything a shader is told about where it is being evaluated. Positions are in
+// document cells, not in a normalised coordinate, so a scale means the same thing in
+// every chunk.
+struct Globals {
+    // The document's extent, in cells.
+    document: vec2<u32>,
+    // The extent of this dispatch, in texels: one chunk, one texel per cell.
+    texels: vec2<u32>,
+    // The document cell this dispatch's first texel stands for, which is also where
+    // every layer texture bound to it starts.
+    origin: vec2<u32>,
+    // Always 0. Kept so a shader that reads it still compiles.
+    shift: u32,
+    // The document's seed.
+    seed: u32,
+}
+
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read_write> layer_out: array<f32>;
+
+const TAU: f32 = 6.2831853;
+const RIDGE_GAIN: f32 = 2.0;
+const NOISE_GAIN: f32 = 2.6;
+
+// The one hash. Its exact output is part of what a saved document means.
+fn hash2(x: i32, y: i32) -> u32 {
+    var h: u32 = u32(x) * 0x27d4eb2du;
+    h = h ^ (u32(y) * 0x165667b1u);
+    h = h ^ (h >> 15u);
+    h = h * 0x85ebca6bu;
+    h = h ^ (h >> 13u);
+    h = h * 0xc2b2ae35u;
+    h = h ^ (h >> 16u);
+    return h;
+}
+
+fn gradient(ix: i32, iy: i32) -> vec2<f32> {
+    let h = hash2(ix, iy);
+    let angle = (f32(h) / 4294967295.0) * TAU;
+    return vec2<f32>(cos(angle), sin(angle));
+}
+
+fn fade(t: f32) -> f32 {
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+// One octave of gradient noise at a position in lattice units, roughly in [-1, 1] and
+// exactly zero at every integer lattice point.
+fn gradient_noise(p: vec2<f32>) -> f32 {
+    let i0 = vec2<i32>(floor(p));
+    let i1 = i0 + vec2<i32>(1, 1);
+    let s = p - floor(p);
+
+    let n00 = dot(gradient(i0.x, i0.y), s);
+    let n10 = dot(gradient(i1.x, i0.y), s - vec2<f32>(1.0, 0.0));
+    let n01 = dot(gradient(i0.x, i1.y), s - vec2<f32>(0.0, 1.0));
+    let n11 = dot(gradient(i1.x, i1.y), s - vec2<f32>(1.0, 1.0));
+
+    let u = fade(s.x);
+    let v = fade(s.y);
+    return mix(mix(n00, n10, u), mix(n01, n11, u), v);
+}
+
+// Octaves of `gradient_noise` summed, each at `lacunarity` times the frequency and
+// `persistence` times the amplitude of the one before, divided by the total
+// amplitude — so changing the octave count refines the layer rather than rescaling
+// it. Zero octaves gives a NaN.
+fn fbm(p: vec2<f32>, octaves: u32, persistence: f32, lacunarity: f32) -> f32 {
+    var total = 0.0;
+    var amplitude = 1.0;
+    var frequency = 1.0;
+    var max_amplitude = 0.0;
+    for (var i = 0u; i < octaves; i = i + 1u) {
+        total = total + gradient_noise(p * frequency) * amplitude;
+        max_amplitude = max_amplitude + amplitude;
+        amplitude = amplitude * persistence;
+        frequency = frequency * lacunarity;
+    }
+    return total / max_amplitude;
+}
+
+// `fbm` read for its creases: each octave contributes (1 - |n|)^2 rather than n, so
+// the zero crossings come out as the high ground. In [0, 1] with no midpoint, and
+// never negative.
+fn ridged_fbm(p: vec2<f32>, octaves: u32, persistence: f32, lacunarity: f32) -> f32 {
+    var total = 0.0;
+    var amplitude = 1.0;
+    var frequency = 1.0;
+    var max_amplitude = 0.0;
+    for (var i = 0u; i < octaves; i = i + 1u) {
+        let crease = max(1.0 - abs(gradient_noise(p * frequency) * RIDGE_GAIN), 0.0);
+        total = total + crease * crease * amplitude;
+        max_amplitude = max_amplitude + amplitude;
+        amplitude = amplitude * persistence;
+        frequency = frequency * lacunarity;
+    }
+    return total / max_amplitude;
+}
+
+// `fbm` stretched around its midpoint onto 0..1, which is the reading a height layer's
+// range expects.
+fn fbm_unit(p: vec2<f32>, octaves: u32, persistence: f32, lacunarity: f32) -> f32 {
+    return clamp(fbm(p, octaves, persistence, lacunarity) * NOISE_GAIN * 0.5 + 0.5, 0.0, 1.0);
+}
+
+// A displacement in lattice units drawn from `seed` and `salt`, added to a noise
+// position so two seeds, or two noises under one seed, read different stretches of the
+// same lattice. Up to about a thousand lattice cells on each axis.
+fn seed_offset(seed: u32, salt: u32) -> vec2<f32> {
+    let h = hash2(i32(seed), i32(salt));
+    return vec2<f32>(f32(h & 0xffffu), f32(h >> 16u)) / 64.0;
+}
+
+// The document position, in cells, of the texel this invocation writes.
+fn cell_position(id: vec2<u32>) -> vec2<f32> {
+    let texel = id + globals.origin;
+    return vec2<f32>(texel) + vec2<f32>(0.5, 0.5);
+}
+
+// The document's extent, in cells.
+fn document_extent() -> vec2<f32> {
+    return vec2<f32>(globals.document);
+}
+
+// A document position as a 0..1 coordinate across the document, which is the reading a
+// shader written against a normalised space wants. Not square: a document wider than it
+// is tall stretches, because the coordinate runs 0..1 on both axes whatever the extent
+// is.
+fn uv(p: vec2<f32>) -> vec2<f32> {
+    return p / document_extent();
+}
+
+// The texel of a bound layer texture a document position falls in — the inverse of
+// `cell_position`, and how a shader turns a position into an index into a layer. A
+// layer texture holds only this dispatch's chunk, so the index is counted from the
+// chunk's origin.
+fn layer_texel(p: vec2<f32>) -> vec2<i32> {
+    return vec2<i32>(floor(p)) - vec2<i32>(globals.origin);
+}
+
+// One texel of a layer texture, clamped to its edge — so a neighbourhood read at the
+// border repeats the edge rather than reading nothing, and a layer with no raster,
+// which is one texel of zero, reads 0.0 everywhere.
+fn input_texel(source: texture_2d<f32>, at: vec2<i32>) -> f32 {
+    let last = vec2<i32>(textureDimensions(source)) - vec2<i32>(1, 1);
+    return textureLoad(source, clamp(at, vec2<i32>(0, 0), last), 0).r;
+}
+
+// Always 0: every layer holds one texel per cell. Kept so a shader that calls it
+// still compiles.
+fn layer_shift(layer: texture_2d<f32>) -> u32 {
+    return 0u;
+}
+
+// Another layer's value at a document position, interpolated between its texels and
+// clamped to the edge of the chunk this dispatch is bound to — the same read a layer
+// reference makes.
+fn layer_value(layer: texture_2d<f32>, p: vec2<f32>) -> f32 {
+    let last = vec2<f32>(textureDimensions(layer)) - vec2<f32>(1.0, 1.0);
+    let local = p - vec2<f32>(globals.origin);
+    let at = clamp(local - vec2<f32>(0.5, 0.5), vec2<f32>(0.0, 0.0), last);
+    let low = floor(at);
+    let f = at - low;
+    let i0 = vec2<i32>(low);
+    let i1 = min(i0 + vec2<i32>(1, 1), vec2<i32>(last));
+    let a = textureLoad(layer, i0, 0).r;
+    let b = textureLoad(layer, vec2<i32>(i1.x, i0.y), 0).r;
+    let c = textureLoad(layer, vec2<i32>(i0.x, i1.y), 0).r;
+    let d = textureLoad(layer, i1, 0).r;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Another layer's value at a document position read whole, to the nearest texel —
+// what a layer declaring `@categorical` holds, where a blend of two class indices
+// would be a third class the layer never had.
+fn layer_class(layer: texture_2d<f32>, p: vec2<f32>) -> f32 {
+    return input_texel(layer, layer_texel(p));
+}

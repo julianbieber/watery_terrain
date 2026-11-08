@@ -2,7 +2,7 @@
 //! that is drawn, collides and is simulated, and moving that window under the
 //! camera without touching the chunks that stay in it.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use avian3d::prelude::{ColliderDisabled, RigidBody, RigidBodyDisabled};
 use bevy::{
@@ -16,13 +16,14 @@ use bevy::{
     },
     tasks::ComputeTaskPool,
 };
+use watershed::{FieldRole, TerrainDir};
 
 use crate::{
     grid::{
         CELL_SIZE, CHUNK_DIM, ChunkCoord, WINDOW_CHUNKS, WORLD_CHUNKS, WORLD_DIM, chunk_of,
         chunk_origin, texel_of,
     },
-    heightmap::{Heightmap, create_terrain_heightmap, create_water_heightmap},
+    heightmap::Heightmap,
     render::clipmap::{FollowTerrainMarker, TerrainMaterial, WaterTerrainMaterial},
     screens::Screen,
     water_sim::ChunkGpuReady,
@@ -83,13 +84,45 @@ impl Chunk {
     }
 }
 
-/// Produces the chunk at `coord`. The one place a different chunk source
-/// replaces the generator.
-pub fn load_chunk(coord: ChunkCoord) -> Chunk {
+const TERRAIN_DIR: &str = "assets/terrain";
+
+/// Takes the height field as terrain and the solved water depth as water.
+///
+/// Panics if the chunk cannot be read, or the directory carries no height field
+/// or no solved water.
+pub fn load_chunk(dir: &TerrainDir, coord: ChunkCoord) -> Chunk {
+    let chunk = UVec2::new(coord.x as u32, coord.z as u32);
+    let terrain = dir
+        .load_chunk(chunk)
+        .unwrap_or_else(|error| panic!("reading terrain chunk {coord:?}: {error}"));
+    let height = terrain
+        .field_with_role(FieldRole::Height)
+        .expect("the terrain directory has no height field");
+    let water = terrain
+        .water()
+        .expect("the terrain directory has no solved water");
+    let cells = || (0..CHUNK_DIM).flat_map(|z| (0..CHUNK_DIM).map(move |x| (x, z)));
     Chunk {
-        terrain: create_terrain_heightmap(coord).into_values().into(),
-        water: create_water_heightmap().into_values().into(),
+        terrain: cells()
+            .map(|(x, z)| height.value_at(x, z).expect("a cell inside the chunk"))
+            .collect(),
+        water: cells()
+            .map(|(x, z)| water.depth_at(x, z).expect("a cell inside the chunk"))
+            .collect(),
     }
+}
+
+fn open_terrain(path: &Path) -> TerrainDir {
+    let dir = TerrainDir::open(path)
+        .unwrap_or_else(|error| panic!("opening terrain {}: {error}", path.display()));
+    let grid = dir.grid();
+    assert_eq!(
+        (grid.chunk_size(), grid.chunks()),
+        (UVec2::splat(CHUNK_DIM), UVec2::splat(WORLD_CHUNKS)),
+        "terrain {} does not match the world grid",
+        path.display()
+    );
+    dir
 }
 
 /// Every chunk of the world, active or not. A chunk outside the window holds
@@ -100,13 +133,18 @@ pub struct WorldChunks {
 }
 
 impl WorldChunks {
-    /// Loads every chunk of the world, in parallel.
-    pub fn generate() -> Self {
+    /// Reads `assets/terrain` under the working directory.
+    ///
+    /// Panics if the directory is missing or unreadable, or its grid is not the
+    /// world's.
+    pub fn load() -> Self {
+        let dir = open_terrain(Path::new(TERRAIN_DIR));
+        let dir = &dir;
         let coords: Vec<ChunkCoord> = world_chunks().collect();
         let chunks = ComputeTaskPool::get().scope(|scope| {
             for coord in &coords {
                 let coord = *coord;
-                scope.spawn(async move { (coord, load_chunk(coord)) });
+                scope.spawn(async move { (coord, load_chunk(dir, coord)) });
             }
         });
         Self {
@@ -458,7 +496,6 @@ mod tests {
         }
     }
 
-    // The window never leaves the world, even when centred on a corner chunk.
     #[test]
     fn centred_on_clamps_to_the_world() {
         assert_eq!(
@@ -471,7 +508,6 @@ mod tests {
         );
     }
 
-    // Hovering within the overlap past a seam keeps the window; going further moves it one chunk on that axis only.
     #[test]
     fn recentre_waits_for_the_overlap_on_each_axis() {
         let layout = ChunkLayout::centred_on(ChunkCoord::new(3, 3));
@@ -487,7 +523,6 @@ mod tests {
         assert_eq!(moved.origin, ChunkCoord::new(3, 2));
     }
 
-    // The camera starting on a seam, as at spawn, does not move the window by itself.
     #[test]
     fn recentre_ignores_a_camera_near_another_seam() {
         let layout = ChunkLayout::centred_on(ChunkCoord::new(3, 3));
@@ -495,7 +530,6 @@ mod tests {
         assert_eq!(layout.recentre(corner + Vec2::new(0.0, 1.0)), None);
     }
 
-    // A diagonal move swaps the five chunks that leave, each into the slot of the chunk it replaces, and keeps the four that stay.
     #[test]
     fn diagonal_shift_keeps_the_staying_chunks_in_their_slots() {
         let before = ChunkLayout::centred_on(ChunkCoord::new(2, 2));
@@ -504,7 +538,6 @@ mod tests {
         assert_slots_are_kept(&before, &after);
     }
 
-    // A jump across the world replaces all nine chunks, which the staging buffers still cover.
     #[test]
     fn far_jump_replaces_every_chunk() {
         let before = ChunkLayout::centred_on(ChunkCoord::new(1, 1));
@@ -513,11 +546,35 @@ mod tests {
         assert_slots_are_kept(&before, &after);
     }
 
-    // A window clamped at the world's edge stays put while the camera is in its edge chunk.
     #[test]
     fn clamped_window_stays_while_the_camera_is_inside_it() {
         let layout = ChunkLayout::centred_on(ChunkCoord::new(5, 5));
         assert_eq!(layout.recentre(centre_of(ChunkCoord::new(5, 5))), None);
+    }
+
+    fn committed_terrain() -> TerrainDir {
+        open_terrain(Path::new(TERRAIN_DIR))
+    }
+
+    #[test]
+    #[should_panic(expected = "opening terrain")]
+    fn a_missing_terrain_directory_panics() {
+        open_terrain(Path::new("no/such/terrain"));
+    }
+
+    #[test]
+    fn a_chunk_holds_one_height_and_one_depth_per_cell() {
+        let chunk = load_chunk(&committed_terrain(), ChunkCoord::new(2, 2));
+        let cells = (CHUNK_DIM * CHUNK_DIM) as usize;
+        assert_eq!(chunk.terrain.len(), cells);
+        assert_eq!(chunk.water.len(), cells);
+    }
+
+    #[test]
+    fn the_committed_terrain_holds_water_and_dry_land() {
+        let chunk = load_chunk(&committed_terrain(), ChunkCoord::new(2, 2));
+        assert!(chunk.water.iter().any(|depth| *depth > 1.0));
+        assert!(chunk.water.contains(&0.0));
     }
 
     fn tiny_world() -> WorldChunks {
@@ -539,7 +596,6 @@ mod tests {
         WorldChunks { chunks }
     }
 
-    // Neighbouring colliders share the samples on their seam, and an edge chunk repeats its own last row.
     #[test]
     fn collider_heights_share_the_seam_with_the_neighbour() {
         let world = tiny_world();
@@ -552,7 +608,6 @@ mod tests {
         assert_eq!(edge.get(3, CHUNK_DIM), edge.get(3, CHUNK_DIM - 1));
     }
 
-    // Each window chunk lands at the texels texel_of names, so the upload and the shaders agree on where it is.
     #[test]
     fn window_heightmap_puts_each_chunk_at_its_texels() {
         let world = tiny_world();

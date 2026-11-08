@@ -1,2 +1,3 @@
 [tools]
 "cargo:https://github.com/julianbieber/bevy_pbr_generator" = "tag:v0.3"
+"cargo:https://github.com/julianbieber/watershed" = "rev:29ce1ffc89ea79392cf464082bed4708cdaed651"

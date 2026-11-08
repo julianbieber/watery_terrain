@@ -190,8 +190,14 @@ without a jump. Vertex heights come from the textures in the vertex shader.
 
 ## Terrain
 
+The world is read at startup from the terrain directory `assets/terrain`, relative
+to the working directory: the height field and the solved water depth of each
+chunk. Edit it with `mise exec -- watershed_editor assets/terrain`; the sim reads
+what was last saved. Startup panics if the directory is missing or unreadable, or
+its grid is not the one in `grid.rs`.
+
 `terrain.wesl` displaces the vertex to the terrain height and picks the atlas
-column by height: sand below 4 m, grass below 7.5 m, rock below 12 m, snow
+column by height: sand below 12 m, grass below 21 m, rock below 27 m, snow
 above.
 
 ## Water

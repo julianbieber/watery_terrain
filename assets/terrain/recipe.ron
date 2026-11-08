@@ -1,0 +1,52 @@
+(
+    version: 6,
+    chunk_size: (1024, 1024),
+    chunks: (6, 6),
+    seed: 1,
+    water_spec: Some((
+        height: ("height"),
+        moisture: None,
+        lake_min_cells: 64,
+    )),
+    fields: [
+        (
+            name: ("height"),
+            export: false,
+            params: {
+                "feature": [
+                    130.0,
+                ],
+                "floor_depth": [
+                    6.0,
+                ],
+                "head_width": [
+                    7.0,
+                ],
+                "mouth_width": [
+                    20.0,
+                ],
+                "octaves": [
+                    5.0,
+                ],
+                "relief": [
+                    12.0,
+                ],
+                "rise": [
+                    0.09,
+                ],
+                "sea_level": [
+                    10.0,
+                ],
+                "shoulder": [
+                    6.0,
+                ],
+                "wall": [
+                    24.0,
+                ],
+                "wander": [
+                    75.0,
+                ],
+            },
+        ),
+    ],
+)
