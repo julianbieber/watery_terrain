@@ -7,6 +7,10 @@ tags:
 
 # Water Simulation
 
+This crate is being built as a library for simulating and drawing water on
+terrain, not as a game. The binary is a demo scene: its spheres are plain shapes
+that show the simulation working.
+
 ## Overview
 
 The water system is a 2D shallow-water simulation on a staggered grid, run
@@ -32,7 +36,7 @@ chunks:
 | `base_height` | Terrain height in metres |
 | `flow_x` | Flow across each cell's −x edge |
 | `flow_y` | Flow across each cell's −z edge |
-| `outflow_scale` | Per-cell fraction of its outflow it can afford |
+| `cell_scratch` | Per-cell fraction of its outflow it can afford, then its depth change of the last step |
 
 **World ↔ cell ↔ texel mapping:**
 ```
@@ -80,12 +84,12 @@ Main world (Update / FixedUpdate)        Render world
 ─────────────────────────────────        ────────────────────────────
 
 count_sim_steps  ── WaterSimSteps ──►    run_water_sim
-collect_displacements                       steps × (flows, outflow scale,
-   └─ DisplacementBufferMain ───────►          limit flows, heights)
+collect_displacements                       steps × (flows, objects, outflow
+   └─ DisplacementBufferMain ───────►          scale, limit flows, heights)
                                             then sample_water once
 WaterAtObjects  ◄── Readback ──────────     └─ WaterSamples buffer
-   ├─ collect_displacements (push)
-   └─ apply_buoyancy (FixedUpdate)
+   ├─ collect_displacements (drag)
+   └─ apply_water_forces (FixedUpdate)
 ```
 
 ### Time step
@@ -98,40 +102,62 @@ time beyond that is dropped.
 
 One pipeline, the pass selected by an immediate (`SimParams.id`):
 
-0. **Flows** — each interior edge: `f = f * damping + dh * acceleration`,
-   with `dh` the difference in water surface (ground + water) clamped to the
-   water in the source cell, plus the push of the nearest submerged object
-   at the edge's midpoint. Within `EDGE_FADE_CELLS` (100) cells of the
-   window's border the flow is scaled down linearly, to zero on the border.
-1. **Outflow scale** — per cell, `min(1, water / total outflow)`.
-2. **Limit flows** — every edge's flow is multiplied by the outflow scale of
+Flow is stored as depth moved per step, `f = q·dt/dx` for the discharge `q` in
+m²/s, so the outflow limit and height passes work in plain depth.
+
+0. **Flows** — each interior edge, as an inertial shallow-water update with
+   semi-implicit Manning friction:
+   ```
+   h = max(surface_a, surface_b) - max(ground_a, ground_b)
+   f = (f + g·dt²/dx² · min(h, h_max) · drop + ν · rate_difference)
+       / (1 + g·dt·n²·|q| / h^(7/3))
+   ```
+   clamped to critical flow (`|q| ≤ h·√(g·min(h, h_max))`). Wave speed is
+   `√(g·h)` up to `h_max`, 0.92 m (3 m/s), where the stability limit caps it. `ν` is a bulk
+   viscosity on the difference between the two cells' depth change of the last
+   step: without it steep fronts ring at the cell scale and the ringing grows.
+   Within `EDGE_FADE_CELLS` (100) cells of the window's border the flow is scaled
+   down linearly, to zero on the border.
+1. **Objects** — each submerged object, in a dispatch over its own footprint:
+   see below.
+2. **Outflow scale** — per cell, `min(1, water / total outflow)`, with a margin
+   so rounding cannot drive a cell negative.
+3. **Limit flows** — every edge's flow is multiplied by the outflow scale of
    the cell it drains, so no cell gives away more than it holds. This keeps
    the total volume inside the window constant.
-3. **Heights** — each cell adds its net inflow, in place.
-4. **Sample** (once per frame) — records water depth and ground height under
-   every object for the CPU; zero outside the window.
+4. **Heights** — each cell adds its net inflow, in place, and records it for the
+   next step's viscosity.
+5. **Sample** (once per frame) — records the water around every object for the
+   CPU; zero outside the window.
 
 ## Object Interaction
 
 ```rust
 pub struct WaterDisplacement {
-    pub radius: f32,    // Area of influence
-    pub strength: f32,  // Push multiplier
+    pub radius: f32,    // Radius of the sphere, in metres
 }
 ```
 
-Up to 64 objects are uploaded each frame with their entity id. Pass 4 samples
-the water under each; the result is read back with Bevy's `Readback` into
-`WaterAtObjects`, keyed by entity, a few frames behind the object's position.
+Up to 64 objects are uploaded each frame with their entity id, height and
+velocity. Pass 5 samples the water around each, just past its rim because the
+object presses down the water under itself; the result is read back with Bevy's
+`Readback` into `WaterAtObjects`, keyed by entity, a few frames behind the
+object's position. Without wet water at the rim it records the column under the
+centre. Water at or below `DRY_DEPTH_MM` (10 mm) counts as dry.
 
-From that sample, the submerged fraction is `(depth - bottom above ground) / (2·radius)`,
-clamped to [0, 1]. Water at or below `DRY_DEPTH_MM` (10 mm) counts as dry.
+The submerged fraction is the sphere's immersed volume over its whole volume.
 
-- **Push on the water**: `strength × submerged fraction`, radially outward
-  inside the object's radius.
-- **Buoyancy** (`apply_buoyancy`, FixedUpdate): an upward acceleration of
+- **Displacement**: the column of water the sphere occupies adds to the surface
+  gradient on the edges under it, like a hydrostatic pressure patch, so water
+  leaves from under the object and piles up around it. Water only moves through
+  flows, so volume is kept.
+- **Drag on the water**: flow under the object is pulled towards the object's
+  velocity by quadratic drag, over the object's footprint.
+- **Buoyancy** (`apply_water_forces`, FixedUpdate): an upward acceleration of
   `|g| × 2 × submerged fraction` (water twice the bodies' density) plus a
   vertical drag of `2 /s × submerged fraction`, through avian's `Forces`.
+- **Drag on the object**: the same quadratic drag on the difference to the
+  water's velocity, so currents and waves carry the object.
 
 ---
 
@@ -183,11 +209,12 @@ terrain hides it.
 | `CHUNK_DIM`, `WORLD_CHUNKS`, `WINDOW_CHUNKS`, `CELLS_PER_METER` | `grid.rs` | Chunk and world size, window size, resolution |
 | `SHIFT_OVERLAP_METRES` | `chunks.rs` | How far past the centre chunk the camera goes before the window follows |
 | `EDGE_FADE_CELLS` | `water_sim/mod.rs` | Width of the flow fade at the window border |
-| `STEP_SECONDS`, `MAX_STEPS_PER_FRAME` | `water_sim/mod.rs` | Sim rate, catch-up limit |
-| `acceleration` (0.118) | `water.wesl` | Flow gained per step from a height difference |
-| `damping` (0.99) | `water.wesl` | Flow kept from the previous step |
+| `STEPS_PER_SECOND`, `MAX_STEPS_PER_FRAME` | `water_sim/mod.rs` | Sim rate, catch-up limit |
+| `MANNING_ROUGHNESS` (0.03) | `water.wesl` | Bed friction, strongest in shallow water |
+| `BULK_VISCOSITY` (0.1) | `water.wesl` | Damping of cell-scale ringing; with `MAX_WAVE_SPEED` it must stay inside the stability limit |
+| `MAX_WAVE_SPEED` (half a cell per step) | `water.wesl` | Wave speed cap, and so `h_max` |
 | `DRY_DEPTH_MM` | `water_sim/mod.rs` | Depth treated as dry |
-| `WATER_DENSITY_RATIO`, `WATER_DRAG_PER_SECOND` | `water_sim/mod.rs` | Buoyancy |
-| `radius`, `strength` | `WaterDisplacement` | Object's reach and push |
+| `WATER_DENSITY_RATIO`, `WATER_DRAG_PER_SECOND`, `SPHERE_DRAG_COEFFICIENT` | `water_sim/mod.rs` | Buoyancy and drag |
+| `radius` | `WaterDisplacement` | Size of the sphere |
 | `NORMAL_MAP_STRENGTH`, `TEXTURE_REPEAT_METRES` | `heightfield.wesl` | Surface detail |
 | `BAND_TOPS` | `terrain.wesl` | Material height bands |
