@@ -1,4 +1,4 @@
-//! Entry point: builds the app from the game's plugins and runs it.
+//! Entry point: builds a demo scene from the crate's plugins and runs it.
 
 #![recursion_limit = "256"]
 
