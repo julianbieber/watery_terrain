@@ -1,4 +1,4 @@
-//! The gameplay screen: the scene the player flies through and its physics.
+//! The demo scene a free camera flies through and its physics.
 
 use avian3d::{
     PhysicsPlugins,
@@ -40,11 +40,24 @@ impl Plugin for GameplayPlugin {
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_plane_dbg);
-        app.add_systems(Update, move_boat.run_if(in_state(Screen::Gameplay)));
+        app.add_systems(Update, circle_spheres.run_if(in_state(Screen::Gameplay)));
     }
 }
 
 const CAMERA_SPAWN: Vec3 = Vec3::new(0.0, 100.0, 1.0);
+
+const POND: Vec3 = Vec3::new(-26.0, 0.0, -7.0);
+
+const DROP_HEIGHT: f32 = 23.0;
+
+const SPHERE_RADIUS: f32 = 0.6;
+
+const CIRCLING_SPEED: f32 = 2.0;
+
+const CIRCLING_RADIUS: f32 = 2.5;
+
+#[derive(Component)]
+struct CirclingSphere;
 
 fn spawn_player_camera(mut commands: Commands) {
     commands.spawn((
@@ -157,15 +170,18 @@ fn spawn_plane_dbg(
     commands.insert_resource(layout);
     commands.insert_resource(world);
 
-    commands.spawn(floating_sphere(
-        3.0,
-        Vec3::Y * 23.0 + Vec3::X * 19.0,
-        &mut meshes,
-        standard_materials.add(Color::srgb_u8(124, 144, 255)),
+    commands.spawn((
+        floating_sphere(
+            SPHERE_RADIUS,
+            POND + Vec3::new(CIRCLING_RADIUS, DROP_HEIGHT, 0.0),
+            &mut meshes,
+            standard_materials.add(Color::srgb_u8(124, 144, 255)),
+        ),
+        CirclingSphere,
     ));
     commands.spawn(floating_sphere(
-        1.0,
-        Vec3::Y * 23.0 + Vec3::X * -39.0,
+        SPHERE_RADIUS,
+        POND + Vec3::new(-8.0, DROP_HEIGHT, 0.0),
         &mut meshes,
         standard_materials.add(Color::srgb_u8(24, 144, 255)),
     ));
@@ -180,10 +196,7 @@ fn floating_sphere(
     (
         DespawnOnExit(Screen::Gameplay),
         Transform::from_translation(position),
-        WaterDisplacement {
-            radius,
-            strength: 1.0,
-        },
+        WaterDisplacement { radius },
         Collider::sphere(radius),
         RigidBody::Dynamic,
         GravityScale(1.0),
@@ -359,10 +372,10 @@ fn land_material(asset_server: &AssetServer) -> StandardMaterial {
     material
 }
 
-fn move_boat(mut boat: Query<&mut LinearVelocity, With<WaterDisplacement>>, time: Res<Time>) {
-    for mut b in &mut boat {
-        b.0.z = time.elapsed_secs().sin() * 3.04;
-        b.0.x =
-            (time.elapsed_secs().cos() + ((time.elapsed_secs() * 0.3).sin().fract() * 2.0)) * 3.04;
+fn circle_spheres(mut spheres: Query<&mut LinearVelocity, With<CirclingSphere>>, time: Res<Time>) {
+    let angle = time.elapsed_secs() * CIRCLING_SPEED / CIRCLING_RADIUS;
+    for mut velocity in &mut spheres {
+        velocity.0.x = -angle.sin() * CIRCLING_SPEED;
+        velocity.0.z = angle.cos() * CIRCLING_SPEED;
     }
 }
