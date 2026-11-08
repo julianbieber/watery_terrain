@@ -103,6 +103,7 @@ wesl-deps:
 	        ("WORKGROUP_SIZE", 8),
 	        ("MAX_DISPLACEMENTS", 64),
 	        ("DRY_DEPTH_MM", 10),
+	        ("STEPS_PER_SECOND", 60),
 	        ("SORTED_FRAGMENT_MAX_COUNT", 128),
 	        ("SCREEN_SPACE_SPECULAR_TRANSMISSION_BLUR_TAPS", 128),
 	        ("MAX_DIRECTIONAL_LIGHTS", 128),

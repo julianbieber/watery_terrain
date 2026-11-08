@@ -1,7 +1,9 @@
 //! The shallow-water simulation over the chunk window on the GPU, and how
 //! objects push the water and are lifted by it.
 
-use avian3d::prelude::{Forces, Gravity, ReadRigidBodyForces, WriteRigidBodyForces};
+use avian3d::prelude::{
+    Forces, Gravity, LinearVelocity, ReadRigidBodyForces, WriteRigidBodyForces,
+};
 use bevy::{
     asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
     ecs::entity::EntityHashMap,
@@ -38,14 +40,16 @@ use std::{
 
 use crate::{
     chunks::{ChunkLayout, ChunkSwap, Parked, StagingBuffers, SwapQueue, park_objects},
-    grid::{CHUNK_DIM, WINDOW_CHUNKS, WINDOW_DIM},
+    grid::{CELLS_PER_METER, CHUNK_DIM, WINDOW_CHUNKS, WINDOW_DIM},
     render::clipmap::WaterTerrainMaterial,
     screens::Screen,
 };
 
 const WORKGROUP_SIZE: u32 = 8;
 
-const STEP_SECONDS: f32 = 1.0 / 60.0;
+const STEPS_PER_SECOND: u32 = 60;
+
+const STEP_SECONDS: f32 = 1.0 / STEPS_PER_SECOND as f32;
 
 const MAX_STEPS_PER_FRAME: u32 = 4;
 
@@ -59,6 +63,15 @@ const DRY_DEPTH: f32 = DRY_DEPTH_MM as f32 / 1000.0;
 const WATER_DENSITY_RATIO: f32 = 2.0;
 
 const WATER_DRAG_PER_SECOND: f32 = 2.0;
+
+const SPHERE_DRAG_COEFFICIENT: f32 = 0.47;
+
+const PASS_FLOWS: i32 = 0;
+const PASS_OUTFLOW_SCALE: i32 = 1;
+const PASS_LIMIT_FLOWS: i32 = 2;
+const PASS_HEIGHTS: i32 = 3;
+const PASS_SAMPLE: i32 = 4;
+const PASS_OBJECT: i32 = 5;
 
 const MAX_DISPLACEMENTS: usize = (WORKGROUP_SIZE * WORKGROUP_SIZE) as usize;
 
@@ -97,7 +110,7 @@ impl Plugin for WaterSimPlugin {
         );
         app.add_systems(
             FixedUpdate,
-            apply_buoyancy.run_if(in_state(Screen::Gameplay)),
+            apply_water_forces.run_if(in_state(Screen::Gameplay)),
         );
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
@@ -127,57 +140,75 @@ impl Plugin for WaterSimPlugin {
     }
 }
 
-/// An object that pushes water away and is lifted by it: `radius` is its reach
-/// in metres, `strength` scales its push. Only the first 64 such objects take
-/// part.
+/// A sphere of `radius` metres that displaces water, is lifted by it, and
+/// exchanges momentum with it. Only the first 64 such objects take part.
 #[derive(Component)]
 pub struct WaterDisplacement {
     pub radius: f32,
-    pub strength: f32,
 }
 
-/// The water column under each [`WaterDisplacement`] object, as the GPU last
+/// The water around each [`WaterDisplacement`] object, as the GPU last
 /// sampled it. An object appears here a few frames after it first gets a
 /// [`WaterDisplacement`], and the sample lags its position by as long.
 #[derive(Resource, Default)]
 pub struct WaterAtObjects(pub EntityHashMap<WaterColumn>);
 
-/// Water depth and ground height in metres at one point of the grid.
+/// The water an object floats in, measured just past its rim where the object
+/// does not disturb it: depth in metres above the `ground` under the object's
+/// centre, and horizontal velocity in metres per second.
 #[derive(Clone, Copy, Debug)]
 pub struct WaterColumn {
     pub depth: f32,
     pub ground: f32,
+    pub velocity: Vec2,
 }
 
-fn submerged_fraction(column: &WaterColumn, transform: &Transform, radius: f32) -> f32 {
-    let bottom_above_ground = (transform.translation.y - radius) - column.ground;
-    if column.depth <= DRY_DEPTH || bottom_above_ground >= column.depth {
+fn submerged_fraction(column: &WaterColumn, height: f32, radius: f32) -> f32 {
+    if column.depth <= DRY_DEPTH {
         return 0.0;
     }
-    (column.depth - bottom_above_ground).min(radius * 2.0) / (radius * 2.0)
+    let surface = column.ground + column.depth;
+    let immersion = (surface - (height - radius)).clamp(0.0, radius * 2.0);
+    immersion * immersion * (3.0 * radius - immersion) / (4.0 * radius * radius * radius)
+}
+
+fn slip_drag(submerged: f32) -> f32 {
+    0.5 * SPHERE_DRAG_COEFFICIENT * submerged
+}
+
+fn acceleration_from_current(
+    column: &WaterColumn,
+    velocity: Vec2,
+    radius: f32,
+    submerged: f32,
+) -> Vec2 {
+    let slip = column.velocity - velocity;
+    slip * slip.length() * slip_drag(submerged) * WATER_DENSITY_RATIO * 3.0 / (4.0 * radius)
 }
 
 fn collect_displacements(
-    d: Query<(Entity, &Transform, &WaterDisplacement), Without<Parked>>,
+    d: Query<(Entity, &Transform, &LinearVelocity, &WaterDisplacement), Without<Parked>>,
     mut buffer: ResMut<DisplacementBufferMain>,
     water: Res<WaterAtObjects>,
 ) {
     buffer.buffer.clear();
-    for (entity, transform, w) in d.iter().take(MAX_DISPLACEMENTS) {
-        let in_water = water.0.get(&entity).map_or(0.0, |column| {
-            submerged_fraction(column, transform, w.radius)
+    for (entity, transform, velocity, w) in d.iter().take(MAX_DISPLACEMENTS) {
+        let submerged = water.0.get(&entity).map_or(0.0, |column| {
+            submerged_fraction(column, transform.translation.y, w.radius)
         });
         let bits = entity.to_bits();
         buffer.buffer.push(Displacement {
             center: transform.translation.xz(),
+            velocity: velocity.0.xz(),
             radius: w.radius,
-            push: w.strength * in_water,
+            height: transform.translation.y,
+            drag: slip_drag(submerged),
             entity: UVec2::new(bits as u32, (bits >> 32) as u32),
         });
     }
 }
 
-fn apply_buoyancy(
+fn apply_water_forces(
     mut bodies: Query<(Entity, Forces, &Transform, &WaterDisplacement), Without<Parked>>,
     water: Res<WaterAtObjects>,
     gravity: Res<Gravity>,
@@ -186,13 +217,15 @@ fn apply_buoyancy(
         let Some(column) = water.0.get(&entity) else {
             continue;
         };
-        let in_water = submerged_fraction(column, transform, w.radius);
-        if in_water == 0.0 {
+        let submerged = submerged_fraction(column, transform.translation.y, w.radius);
+        if submerged == 0.0 {
             continue;
         }
-        let lift = gravity.0.length() * WATER_DENSITY_RATIO * in_water;
-        let drag = -forces.linear_velocity().y * WATER_DRAG_PER_SECOND * in_water;
-        forces.apply_linear_acceleration(Vec3::Y * (lift + drag));
+        let velocity = forces.linear_velocity();
+        let lift = gravity.0.length() * WATER_DENSITY_RATIO * submerged;
+        let vertical_drag = -velocity.y * WATER_DRAG_PER_SECOND * submerged;
+        let current = acceleration_from_current(column, velocity.xz(), w.radius, submerged);
+        forces.apply_linear_acceleration(Vec3::new(current.x, lift + vertical_drag, current.y));
     }
 }
 
@@ -207,6 +240,7 @@ fn store_water_samples(readback: On<ReadbackComplete>, mut water: ResMut<WaterAt
                 WaterColumn {
                     depth: sample.depth,
                     ground: sample.ground,
+                    velocity: sample.velocity,
                 },
             );
         }
@@ -243,6 +277,7 @@ fn run_water_sim(
     bind_group: If<Res<WaterBindGroup>>,
     steps: If<Res<WaterSimSteps>>,
     layout: If<Res<ChunkLayout>>,
+    objects: If<Res<DisplacementBufferMain>>,
 ) {
     let window_origin = layout.origin_uvec();
     let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
@@ -256,46 +291,47 @@ fn run_water_sim(
     pass.set_pipeline(update_pipeline);
 
     let workgroups = WINDOW_DIM.div_ceil(WORKGROUP_SIZE);
+    let params = |id, object| SimParams {
+        id,
+        object,
+        window_origin,
+    };
     for _ in 0..steps.0.due {
-        for id in [0, 1, 2, 3] {
-            pass.set_immediates(
-                0,
-                bytemuck::bytes_of(&SimParams {
-                    id,
-                    _pad: 0,
-                    window_origin,
-                }),
-            );
+        pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_FLOWS, 0)));
+        pass.dispatch_workgroups(workgroups, workgroups, 1);
+        for (index, object) in objects.buffer.iter().enumerate() {
+            if object.drag == 0.0 {
+                continue;
+            }
+            pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_OBJECT, index as u32)));
+            let footprint = footprint_workgroups(object.radius);
+            pass.dispatch_workgroups(footprint, footprint, 1);
+        }
+        for id in [PASS_OUTFLOW_SCALE, PASS_LIMIT_FLOWS, PASS_HEIGHTS] {
+            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0)));
             pass.dispatch_workgroups(workgroups, workgroups, 1);
         }
     }
 
-    pass.set_immediates(
-        0,
-        bytemuck::bytes_of(&SimParams {
-            id: 4,
-            _pad: 0,
-            window_origin,
-        }),
-    );
+    pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_SAMPLE, 0)));
     pass.dispatch_workgroups(1, 1, 1);
+}
+
+fn footprint_workgroups(radius: f32) -> u32 {
+    let cells = (2.0 * radius * CELLS_PER_METER as f32).ceil() as u32 + 3;
+    cells.div_ceil(WORKGROUP_SIZE)
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct SimParams {
     id: i32,
-    _pad: u32,
+    object: u32,
     window_origin: UVec2,
 }
 
 fn init_internal_textures(
-    trigger: On<
-        Add<(
-            // MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>,
-            WaterMarker,
-        )>,
-    >,
+    trigger: On<Add<(WaterMarker,)>>,
     mut commands: Commands,
     material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
     water_terrain_materials: Res<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
@@ -307,7 +343,7 @@ fn init_internal_textures(
     let material = water_terrain_materials.get(material.0.id()).unwrap();
     let flow_x = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
     let flow_y = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
-    let outflow_scale = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
+    let cell_scratch = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
     let samples = buffers.add(ShaderBuffer::with_size(
         WaterSamples::min_size().get(),
         RenderAssetUsages::RENDER_WORLD,
@@ -324,7 +360,7 @@ fn init_internal_textures(
         flow_x,
         flow_y,
         base_height: material.extension.base.clone(),
-        outflow_scale,
+        cell_scratch,
         samples,
     });
 }
@@ -390,6 +426,8 @@ fn init_water_render(
             ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE),
             ShaderDefVal::UInt("MAX_DISPLACEMENTS".into(), MAX_DISPLACEMENTS as u32),
             ShaderDefVal::UInt("EDGE_FADE_CELLS".into(), EDGE_FADE_CELLS),
+            ShaderDefVal::UInt("STEPS_PER_SECOND".into(), STEPS_PER_SECOND),
+            ShaderDefVal::UInt("DRY_DEPTH_MM".into(), DRY_DEPTH_MM),
         ],
         immediate_size: std::mem::size_of::<SimParams>() as u32,
         ..Default::default()
@@ -423,12 +461,12 @@ fn prepare_water_bindgroups(
     if bind_group.is_some() {
         return;
     }
-    let (Some(water), Some(flow_x), Some(flow_y), Some(base), Some(outflow_scale), Some(samples)) = (
+    let (Some(water), Some(flow_x), Some(flow_y), Some(base), Some(cell_scratch), Some(samples)) = (
         gpu_images.get(&water_images.water),
         gpu_images.get(&water_images.flow_x),
         gpu_images.get(&water_images.flow_y),
         gpu_images.get(&water_images.base_height),
-        gpu_images.get(&water_images.outflow_scale),
+        gpu_images.get(&water_images.cell_scratch),
         gpu_buffers.get(&water_images.samples),
     ) else {
         return;
@@ -443,7 +481,7 @@ fn prepare_water_bindgroups(
             &flow_y.texture_view,
             displacement.buffer.binding().unwrap(),
             &base.texture_view,
-            &outflow_scale.texture_view,
+            &cell_scratch.texture_view,
             samples.buffer.as_entire_buffer_binding(),
         )),
     );
@@ -460,7 +498,7 @@ pub struct WaterHeightTexture {
     pub flow_x: Handle<Image>,
     pub flow_y: Handle<Image>,
     pub base_height: Handle<Image>,
-    pub outflow_scale: Handle<Image>,
+    pub cell_scratch: Handle<Image>,
     pub samples: Handle<ShaderBuffer>,
 }
 
@@ -473,8 +511,10 @@ struct DisplacementBufferMain {
 #[derive(ShaderType, Clone, Copy, Default)]
 struct Displacement {
     center: Vec2,
+    velocity: Vec2,
     radius: f32,
-    push: f32,
+    height: f32,
+    drag: f32,
     entity: UVec2,
 }
 
@@ -487,6 +527,7 @@ struct Displacements {
 #[derive(ShaderType, Clone, Copy, Default)]
 struct WaterSample {
     entity: UVec2,
+    velocity: Vec2,
     depth: f32,
     ground: f32,
 }
@@ -596,7 +637,7 @@ fn swap_chunks(
     let flows = [
         texture(&water_images.flow_x),
         texture(&water_images.flow_y),
-        texture(&water_images.outflow_scale),
+        texture(&water_images.cell_scratch),
     ];
     let device = render_context.render_device().clone();
     let zeros = zeros
@@ -652,5 +693,71 @@ fn swap_chunks(
                 chunk_extent(),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn water(surface: f32) -> WaterColumn {
+        WaterColumn {
+            depth: surface,
+            ground: 0.0,
+            velocity: Vec2::ZERO,
+        }
+    }
+
+    #[test]
+    fn sphere_with_centre_on_the_surface_is_half_submerged() {
+        assert!((submerged_fraction(&water(5.0), 5.0, 2.0) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sphere_above_the_surface_is_not_submerged() {
+        assert_eq!(submerged_fraction(&water(1.0), 5.0, 2.0), 0.0);
+    }
+
+    #[test]
+    fn sphere_below_the_surface_is_fully_submerged() {
+        assert!((submerged_fraction(&water(10.0), 5.0, 2.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn water_at_the_dry_depth_lifts_nothing() {
+        assert_eq!(submerged_fraction(&water(DRY_DEPTH), 0.0, 2.0), 0.0);
+    }
+
+    #[test]
+    fn submerging_grows_with_the_volume_of_a_cap_not_linearly() {
+        assert!(submerged_fraction(&water(1.5), 2.0, 1.0) < 0.25);
+    }
+
+    #[test]
+    fn current_pushes_a_still_object_along_the_flow() {
+        let column = WaterColumn {
+            velocity: Vec2::new(2.0, 0.0),
+            ..water(5.0)
+        };
+        let push = acceleration_from_current(&column, Vec2::ZERO, 1.0, 1.0);
+        assert!(push.x > 0.0 && push.y == 0.0);
+    }
+
+    #[test]
+    fn current_slows_an_object_moving_through_still_water() {
+        let push = acceleration_from_current(&water(5.0), Vec2::new(0.0, 3.0), 1.0, 1.0);
+        assert!(push.y < 0.0 && push.x == 0.0);
+    }
+
+    #[test]
+    fn dry_object_feels_no_current() {
+        let column = WaterColumn {
+            velocity: Vec2::new(2.0, 0.0),
+            ..water(5.0)
+        };
+        assert_eq!(
+            acceleration_from_current(&column, Vec2::ZERO, 1.0, 0.0),
+            Vec2::ZERO
+        );
     }
 }

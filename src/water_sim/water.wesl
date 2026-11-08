@@ -1,8 +1,7 @@
-// The shallow-water simulation over the active window, one pass per dispatch
-// selected by `SimParams.id`, plus the pass that samples the water under each
-// displacement for the CPU. Every texture holds the window's chunks at their
-// world cells modulo WINDOW_DIM; a cell's flow texels hold the flow across its
-// own -x and -z edges.
+// The shallow-water simulation over the active window and its exchange with
+// displacing objects, one pass per dispatch selected by `SimParams.id`. Every
+// texture holds the window's chunks at their world cells modulo WINDOW_DIM; a
+// cell's flow texels hold the flow across its own -x and -z edges.
 
 import package::grid;
 
@@ -13,8 +12,10 @@ import package::grid;
 
 struct Displacement {
     center: vec2f,
+    velocity: vec2f,
     radius: f32,
-    push: f32,
+    height: f32,
+    drag: f32,
     entity: vec2u,
 }
 
@@ -27,10 +28,11 @@ struct Displacements {
 
 @group(0) @binding(4) var base_height_texture: texture_storage_2d<r32float, read>;
 
-@group(0) @binding(5) var outflow_scale: texture_storage_2d<r32float, read_write>;
+@group(0) @binding(5) var cell_scratch: texture_storage_2d<r32float, read_write>;
 
 struct WaterSample {
     entity: vec2u,
+    velocity: vec2f,
     depth: f32,
     ground: f32,
 }
@@ -44,11 +46,34 @@ struct WaterSamples {
 
 struct SimParams {
     id: i32,
+    object: u32,
     window_origin: vec2u,
 };
 var<immediate> sim: SimParams;
 
 const WINDOW: i32 = i32(grid::WINDOW_DIM);
+
+const GRAVITY: f32 = 9.81;
+
+const STEP_SECONDS: f32 = 1.0 / f32(constants::STEPS_PER_SECOND);
+
+const CELL_SPEED: f32 = f32(constants::STEPS_PER_SECOND) / grid::CELLS_PER_METER;
+
+const FLOW_GAIN: f32 = GRAVITY / (CELL_SPEED * CELL_SPEED);
+
+const MAX_WAVE_SPEED: f32 = 0.5 * CELL_SPEED;
+
+const MAX_WAVE_DEPTH: f32 = MAX_WAVE_SPEED * MAX_WAVE_SPEED / GRAVITY;
+
+const MANNING_ROUGHNESS: f32 = 0.03;
+
+const MIN_FRICTION_DEPTH: f32 = 0.001;
+
+const BULK_VISCOSITY: f32 = 0.1;
+
+const OUTFLOW_MARGIN: f32 = 0.9999;
+
+const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
 
 // Texel of the window cell `cell`, counted from the window's first cell.
 fn texel(cell: vec2i) -> vec2u {
@@ -107,52 +132,29 @@ fn edge_fade(p: vec2f) -> f32 {
     return clamp(min(to_border.x, to_border.y) / f32(constants::EDGE_FADE_CELLS), 0.0, 1.0);
 }
 
-struct DisplacementResult {
-    distance: f32,
-    index: i32,
+fn face_depth(a: vec2f, b: vec2f) -> f32 {
+    return max(max(a.x + a.y, b.x + b.y) - max(a.x, b.x), 0.0);
 }
 
-fn distance_from_displacement(p: vec2f) -> DisplacementResult {
-    var m = 10000000000.0;
-    var current_min: i32 = -1;
-
-    for (var i: u32 = 0; i < displacements.count; i = i + 1) {
-        let c = displacements.items[i];
-        if c.push == 0.0 {
-            continue;
-        }
-        let d = length(c.center - p) - c.radius;
-        if d < m {
-            m = d;
-            current_min = i32(i);
-        }
-    }
-
-    return DisplacementResult(m, current_min);
+fn critical_flow(flow: f32, depth: f32) -> f32 {
+    let limit = depth * sqrt(GRAVITY * min(depth, MAX_WAVE_DEPTH)) / CELL_SPEED;
+    return clamp(flow, -limit, limit);
 }
 
-// Flow that the nearest displacement circle `d` pushes through point `p`
-// along `axis`: radially outward inside the circle, nothing outside it or at
-// its exact centre, where the outward direction is undefined.
-fn displacement_push(d: DisplacementResult, p: vec2f, axis: vec2f) -> f32 {
-    if d.index < 0 || d.distance >= 0.0 {
+fn depth_change(cell: vec2i) -> f32 {
+    return textureLoad(cell_scratch, texel(cell)).x;
+}
+
+fn next_flow(flow: f32, from_cell: vec2f, to_cell: vec2f, rate_difference: f32) -> f32 {
+    let depth = face_depth(from_cell, to_cell);
+    if depth <= 0.0 {
         return 0.0;
     }
-    let circle = displacements.items[d.index];
-    let offset = p - circle.center;
-    let offset_length = length(offset);
-    if offset_length == 0.0 {
-        return 0.0;
-    }
-    return dot(offset / offset_length, axis) * circle.push;
-}
-
-fn surface_drop(from_cell: vec2f, to_cell: vec2f) -> f32 {
-    let dh = (from_cell.x + from_cell.y) - (to_cell.x + to_cell.y);
-    if dh < 0.0 {
-        return -min(abs(dh), to_cell.y);
-    }
-    return min(dh, from_cell.y);
+    let drop = (from_cell.x + from_cell.y) - (to_cell.x + to_cell.y);
+    let driven = flow + FLOW_GAIN * min(depth, MAX_WAVE_DEPTH) * drop + BULK_VISCOSITY * rate_difference;
+    let friction = GRAVITY * STEP_SECONDS * MANNING_ROUGHNESS * MANNING_ROUGHNESS
+        * abs(flow) * CELL_SPEED / pow(max(depth, MIN_FRICTION_DEPTH), 7.0 / 3.0);
+    return critical_flow(driven / (1.0 + friction), depth);
 }
 
 fn update_flows(invocation_id: vec3<u32>) {
@@ -160,26 +162,68 @@ fn update_flows(invocation_id: vec3<u32>) {
     if !in_window(e) {
         return;
     }
-
-    let acceleration = 0.118;
-    let damping = 0.99;
+    let here = get_height(e);
+    let here_rate = depth_change(e);
 
     if e.x > 0 {
         let midpoint = vec2f(f32(e.x), f32(e.y) + 0.5);
-        var f = get_flow_x(e) * damping
-            + surface_drop(get_height(e - vec2i(1, 0)), get_height(e)) * acceleration;
-        let edge_center = world_of_window(midpoint);
-        f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(1.0, 0.0));
+        let f = next_flow(get_flow_x(e), get_height(e - vec2i(1, 0)), here, depth_change(e - vec2i(1, 0)) - here_rate);
         set_flow_x(e, f * edge_fade(midpoint));
     }
 
     if e.y > 0 {
         let midpoint = vec2f(f32(e.x) + 0.5, f32(e.y));
-        var f = get_flow_y(e) * damping
-            + surface_drop(get_height(e - vec2i(0, 1)), get_height(e)) * acceleration;
-        let edge_center = world_of_window(midpoint);
-        f += displacement_push(distance_from_displacement(edge_center), edge_center, vec2f(0.0, 1.0));
+        let f = next_flow(get_flow_y(e), get_height(e - vec2i(0, 1)), here, depth_change(e - vec2i(0, 1)) - here_rate);
         set_flow_y(e, f * edge_fade(midpoint));
+    }
+}
+
+fn immersed_thickness(cell: vec2i, column: vec2f, object: Displacement) -> f32 {
+    let offset = world_of_window(vec2f(cell)) - object.center;
+    let chord_squared = object.radius * object.radius - dot(offset, offset);
+    if chord_squared <= 0.0 {
+        return 0.0;
+    }
+    let half_chord = sqrt(chord_squared);
+    let top = min(column.x + column.y, object.height + half_chord);
+    let bottom = max(column.x, object.height - half_chord);
+    return max(top - bottom, 0.0);
+}
+
+fn flow_past_object(flow: f32, upwind: vec2i, downwind: vec2i, axis: vec2f, object: Displacement) -> f32 {
+    let from_column = get_height(upwind);
+    let to_column = get_height(downwind);
+    let depth = face_depth(from_column, to_column);
+    if depth <= 0.0 {
+        return flow;
+    }
+    let from_thickness = immersed_thickness(upwind, from_column, object);
+    let to_thickness = immersed_thickness(downwind, to_column, object);
+    if from_thickness == 0.0 && to_thickness == 0.0 {
+        return flow;
+    }
+    let pressure = FLOW_GAIN * min(depth, MAX_WAVE_DEPTH) * (from_thickness - to_thickness);
+    let slip = dot(object.velocity, axis) - flow * CELL_SPEED / depth;
+    let rate = object.drag * abs(slip) * STEP_SECONDS / depth;
+    let dragged = slip * depth / CELL_SPEED * rate / (1.0 + rate);
+    return critical_flow(flow + pressure + dragged, depth);
+}
+
+fn apply_object(invocation_id: vec3<u32>) {
+    let object = displacements.items[sim.object];
+    let first = vec2i(floor(grid::world_cell(object.center - vec2f(object.radius))))
+        - grid::window_first_cell(sim.window_origin) - vec2i(1);
+    let e = first + vec2i(invocation_id.xy);
+    if !in_window(e) {
+        return;
+    }
+    if e.x > 0 {
+        let f = get_flow_x(e);
+        set_flow_x(e, flow_past_object(f, e - vec2i(1, 0), e, vec2f(1.0, 0.0), object));
+    }
+    if e.y > 0 {
+        let f = get_flow_y(e);
+        set_flow_y(e, flow_past_object(f, e - vec2i(0, 1), e, vec2f(0.0, 1.0), object));
     }
 }
 
@@ -195,13 +239,13 @@ fn update_outflow_scale(invocation_id: vec3<u32>) {
     let available = get_height(l).y;
     var scale = 1.0;
     if outflow > available {
-        scale = available / outflow;
+        scale = available / outflow * OUTFLOW_MARGIN;
     }
-    textureStore(outflow_scale, texel(l), vec4f(scale, 0.0, 0.0, 0.0));
+    textureStore(cell_scratch, texel(l), vec4f(scale, 0.0, 0.0, 0.0));
 }
 
 fn source_scale(f: f32, positive_source: vec2i, negative_source: vec2i) -> f32 {
-    return textureLoad(outflow_scale, texel(select(negative_source, positive_source, f > 0.0))).x;
+    return textureLoad(cell_scratch, texel(select(negative_source, positive_source, f > 0.0))).x;
 }
 
 // Scales every interior edge's flow by the outflow scale of the cell it
@@ -231,10 +275,17 @@ fn update_water_height(invocation_id: vec3<u32>) {
         + (get_flow_y(l) - get_flow_y(l + vec2i(0, 1)));
 
     set_height(l, max(0.0, get_height(l).y + net));
+    textureStore(cell_scratch, texel(l), vec4f(net, 0.0, 0.0, 0.0));
 }
 
-// Records the water depth and ground height under every displacement, for
-// the CPU to read back; one thread per displacement.
+fn water_velocity(cell: vec2i, depth: f32) -> vec2f {
+    let flow = vec2f(
+        get_flow_x(cell) + get_flow_x(cell + vec2i(1, 0)),
+        get_flow_y(cell) + get_flow_y(cell + vec2i(0, 1)),
+    ) * 0.5;
+    return flow * CELL_SPEED / max(depth, DRY_DEPTH);
+}
+
 fn sample_water(invocation_id: vec3<u32>) {
     let i = invocation_id.x + invocation_id.y * constants::WORKGROUP_SIZE;
     if i == 0 {
@@ -244,13 +295,36 @@ fn sample_water(invocation_id: vec3<u32>) {
         return;
     }
     let displacement = displacements.items[i];
-    let cell = vec2i(floor(grid::world_cell(displacement.center)))
-        - grid::window_first_cell(sim.window_origin);
-    var sample = WaterSample(displacement.entity, 0.0, 0.0);
-    if in_window(cell) {
-        let column = get_height(cell);
+    let first = grid::window_first_cell(sim.window_origin);
+    let center = vec2i(floor(grid::world_cell(displacement.center))) - first;
+    var sample = WaterSample(displacement.entity, vec2f(0.0), 0.0, 0.0);
+    if in_window(center) {
+        let column = get_height(center);
         sample.depth = column.y;
         sample.ground = column.x;
+        sample.velocity = water_velocity(center, column.y);
+
+        let reach = displacement.radius + 2.0 / grid::CELLS_PER_METER;
+        var directions = array(vec2f(1.0, 0.0), vec2f(-1.0, 0.0), vec2f(0.0, 1.0), vec2f(0.0, -1.0));
+        var wet = 0.0;
+        var surface = 0.0;
+        var velocity = vec2f(0.0);
+        for (var d = 0; d < 4; d += 1) {
+            let rim_point = displacement.center + directions[d] * reach;
+            let rim = vec2i(floor(grid::world_cell(rim_point))) - first;
+            if in_window(rim) {
+                let rim_column = get_height(rim);
+                if rim_column.y > DRY_DEPTH {
+                    wet += 1.0;
+                    surface += rim_column.x + rim_column.y;
+                    velocity += water_velocity(rim, rim_column.y);
+                }
+            }
+        }
+        if wet > 0.0 {
+            sample.depth = max(surface / wet - column.x, 0.0);
+            sample.velocity = velocity / wet;
+        }
     }
     samples.items[i] = sample;
 }
@@ -267,5 +341,7 @@ fn main(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         update_water_height(invocation_id);
     } else if sim.id == 4 {
         sample_water(invocation_id);
+    } else if sim.id == 5 {
+        apply_object(invocation_id);
     }
 }
