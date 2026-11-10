@@ -49,7 +49,7 @@ impl Plugin for GameplayPlugin {
 
 /// Which lights of the scene cast shadows. Read when a light appears, so it
 /// is set before the app runs.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum Shadows {
     /// The sun with its default cascades, and the camera's point light.
     Full,
@@ -58,29 +58,6 @@ pub enum Shadows {
     Sun,
     /// No light casts shadows.
     Off,
-}
-
-impl Shadows {
-    /// The setting named by a `--shadows <full|sun|off>` or
-    /// `--shadows=<full|sun|off>` argument, the default without one. Errors
-    /// name a value that is none of these, or a flag with no value.
-    pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
-        let mut args = args.into_iter();
-        while let Some(arg) = args.next() {
-            let value = match arg.strip_prefix("--shadows") {
-                Some("") => args.next().ok_or("--shadows needs a value")?,
-                Some(rest) if rest.starts_with('=') => rest[1..].to_string(),
-                _ => continue,
-            };
-            return match value.as_str() {
-                "full" => Ok(Self::Full),
-                "sun" => Ok(Self::Sun),
-                "off" => Ok(Self::Off),
-                other => Err(format!("--shadows takes full, sun or off, not {other:?}")),
-            };
-        }
-        Ok(Self::default())
-    }
 }
 
 fn apply_sun_shadows(
@@ -311,31 +288,5 @@ fn circle_spheres(mut spheres: Query<&mut LinearVelocity, With<CirclingSphere>>,
     for mut velocity in &mut spheres {
         velocity.0.x = -angle.sin() * CIRCLING_SPEED;
         velocity.0.z = angle.cos() * CIRCLING_SPEED;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn parse(args: &[&str]) -> Result<Shadows, String> {
-        Shadows::from_args(args.iter().map(|a| a.to_string()))
-    }
-
-    #[test]
-    fn no_flag_gives_the_default() {
-        assert_eq!(parse(&["--other"]), Ok(Shadows::Sun));
-    }
-
-    #[test]
-    fn value_is_read_after_a_space_or_an_equals_sign() {
-        assert_eq!(parse(&["--shadows", "off"]), Ok(Shadows::Off));
-        assert_eq!(parse(&["--shadows=full"]), Ok(Shadows::Full));
-    }
-
-    #[test]
-    fn unknown_or_missing_value_is_an_error() {
-        assert!(parse(&["--shadows=soft"]).is_err());
-        assert!(parse(&["--shadows"]).is_err());
     }
 }
