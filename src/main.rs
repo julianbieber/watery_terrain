@@ -1,4 +1,5 @@
 //! Entry point: builds a demo scene from the crate's plugins and runs it.
+//! `--shadows <full|sun|off>` picks which lights cast shadows.
 
 #![recursion_limit = "256"]
 
@@ -31,6 +32,13 @@ mod tooltip;
 mod water_sim;
 
 fn main() -> AppExit {
+    let shadows = match gameplay::Shadows::from_args(std::env::args().skip(1)) {
+        Ok(shadows) => shadows,
+        Err(error) => {
+            eprintln!("{error}");
+            return AppExit::error();
+        }
+    };
     let sky_plugin = SkyPlugin::builder()
         .set_sun_driver(SunDriverPlugin {
             sun_settings: SunSettings {
@@ -88,6 +96,7 @@ fn main() -> AppExit {
             WaterSimPlugin,
             TerrainRanderPlugin,
         ))
+        .insert_resource(shadows)
         .run()
 }
 
