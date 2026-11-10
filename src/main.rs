@@ -1,7 +1,8 @@
 //! Entry point: builds a demo scene from the crate's plugins and runs it.
-//! `--shadows <full|sun|off>` picks which lights cast shadows.
 
 #![recursion_limit = "256"]
+
+use clap::Parser;
 
 use bevy::{
     feathers::{FeathersPlugins, palette::WHITE},
@@ -17,8 +18,8 @@ use bevy_sky_gradient::{
 };
 
 use crate::{
-    chunks::ChunkPlugin, grid::GridPlugin, render::TerrainRanderPlugin, screens::ScreenPlugin,
-    water_sim::WaterSimPlugin,
+    chunks::ChunkPlugin, gameplay::Shadows, grid::GridPlugin, render::TerrainRanderPlugin,
+    screens::ScreenPlugin, water_sim::WaterSimPlugin,
 };
 
 mod chunks;
@@ -31,14 +32,16 @@ mod screens;
 mod tooltip;
 mod water_sim;
 
+/// Watery terrain demo.
+#[derive(Parser, Debug)]
+struct Args {
+    /// Which lights cast shadows.
+    #[arg(long, value_enum, default_value_t)]
+    shadows: Shadows,
+}
+
 fn main() -> AppExit {
-    let shadows = match gameplay::Shadows::from_args(std::env::args().skip(1)) {
-        Ok(shadows) => shadows,
-        Err(error) => {
-            eprintln!("{error}");
-            return AppExit::error();
-        }
-    };
+    let args = Args::parse();
     let sky_plugin = SkyPlugin::builder()
         .set_sun_driver(SunDriverPlugin {
             sun_settings: SunSettings {
@@ -96,7 +99,7 @@ fn main() -> AppExit {
             WaterSimPlugin,
             TerrainRanderPlugin,
         ))
-        .insert_resource(shadows)
+        .insert_resource(args.shadows)
         .run()
 }
 
@@ -105,4 +108,32 @@ macro_rules! v3 {
     ($x:expr, $y:expr, $z:expr) => {
         bevy::math::Vec3::new($x as f32, $y as f32, $z as f32)
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shadows_default_to_the_sun() {
+        assert_eq!(Args::parse_from(["demo"]).shadows, Shadows::Sun);
+    }
+
+    #[test]
+    fn shadows_are_read_after_a_space_or_an_equals_sign() {
+        assert_eq!(
+            Args::parse_from(["demo", "--shadows", "off"]).shadows,
+            Shadows::Off
+        );
+        assert_eq!(
+            Args::parse_from(["demo", "--shadows=full"]).shadows,
+            Shadows::Full
+        );
+    }
+
+    #[test]
+    fn unknown_or_missing_shadows_value_is_rejected() {
+        assert!(Args::try_parse_from(["demo", "--shadows=soft"]).is_err());
+        assert!(Args::try_parse_from(["demo", "--shadows"]).is_err());
+    }
 }
