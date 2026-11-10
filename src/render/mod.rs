@@ -1,7 +1,6 @@
 //! Draws the terrain and water surfaces.
 
 pub mod clipmap;
-mod mipmaps;
 
 use bevy::{
     asset::embedded_asset,
@@ -11,10 +10,7 @@ use bevy::{
 };
 
 use crate::{
-    render::{
-        clipmap::{TerrainMaterial, WaterTerrainMaterial, follow},
-        mipmaps::SurfaceMipmapPlugin,
-    },
+    render::clipmap::{TerrainMaterial, WaterTerrainMaterial, follow},
     screens::Screen,
     water_sim::DRY_DEPTH_MM,
 };
@@ -33,7 +29,6 @@ impl Plugin for TerrainRanderPlugin {
         embedded_asset!(app, "water_forward.wesl");
         embedded_asset!(app, "water_prepass.wesl");
 
-        app.add_plugins(SurfaceMipmapPlugin);
         app.add_plugins(MaterialPlugin::<
             ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>,
         >::default());

@@ -268,7 +268,7 @@ fn exported_material(
                 });
                 settings.is_srgb = is_srgb;
             })
-            .load(format!("{dir}/{name}.png"))
+            .load(format!("{dir}/{name}.ktx2"))
     };
     let orm = load("orm", false);
     StandardMaterial {
