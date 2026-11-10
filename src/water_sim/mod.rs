@@ -1,5 +1,5 @@
-//! The shallow-water simulation over the chunk window on the GPU, and how
-//! objects push the water and are lifted by it.
+//! The shallow-water simulation on the GPU over the chunk the window follows
+//! the camera with, and how objects push the water and are lifted by it.
 
 use avian3d::prelude::{
     Forces, Gravity, LinearVelocity, ReadRigidBodyForces, WriteRigidBodyForces,
@@ -21,7 +21,9 @@ use bevy::{
             ShaderStages, ShaderType, StorageBuffer, TexelCopyBufferInfo, TexelCopyBufferLayout,
             TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat,
             TextureUsages,
-            binding_types::{storage_buffer, storage_buffer_read_only, texture_storage_2d},
+            binding_types::{
+                storage_buffer, storage_buffer_read_only, storage_buffer_sized, texture_storage_2d,
+            },
         },
         renderer::{RenderContext, RenderDevice, RenderGraphSystems, RenderQueue},
         storage::{GpuShaderBuffer, ShaderBuffer},
@@ -51,7 +53,7 @@ const STEPS_PER_SECOND: u32 = 60;
 
 const STEP_SECONDS: f32 = 1.0 / STEPS_PER_SECOND as f32;
 
-const MAX_STEPS_PER_FRAME: u32 = 4;
+const MAX_STEPS_PER_FRAME: u32 = 1;
 
 /// Water depth in millimetres at or below which a cell counts as dry: it is
 /// not drawn and lifts nothing. The water shader reads it as
@@ -72,6 +74,7 @@ const PASS_LIMIT_FLOWS: i32 = 2;
 const PASS_HEIGHTS: i32 = 3;
 const PASS_SAMPLE: i32 = 4;
 const PASS_OBJECT: i32 = 5;
+const PASS_MARK_ACTIVE: i32 = 6;
 
 const MAX_DISPLACEMENTS: usize = (WORKGROUP_SIZE * WORKGROUP_SIZE) as usize;
 
@@ -272,6 +275,7 @@ fn count_sim_steps(time: Res<Time>, mut steps: ResMut<WaterSimSteps>) {
 
 fn run_water_sim(
     mut render_context: RenderContext,
+    mut step: Local<u32>,
     pipeline: If<Res<WaterRenderPipeline>>,
     pipeline_cache: If<Res<PipelineCache>>,
     bind_group: If<Res<WaterBindGroup>>,
@@ -280,6 +284,7 @@ fn run_water_sim(
     objects: If<Res<DisplacementBufferMain>>,
 ) {
     let window_origin = layout.origin_uvec();
+    let centre = layout.centre_uvec();
     let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
         return;
     };
@@ -290,30 +295,39 @@ fn run_water_sim(
     pass.set_bind_group(0, &bind_group.0.0, &[]);
     pass.set_pipeline(update_pipeline);
 
-    let workgroups = WINDOW_DIM.div_ceil(WORKGROUP_SIZE);
-    let params = |id, object| SimParams {
+    let workgroups = CHUNK_DIM / WORKGROUP_SIZE;
+    let params = |id, object, step| SimParams {
         id,
         object,
         window_origin,
+        centre,
+        step,
+        padding: 0,
     };
     for _ in 0..steps.0.due {
-        pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_FLOWS, 0)));
-        pass.dispatch_workgroups(workgroups, workgroups, 1);
+        *step = step.wrapping_add(1).max(1);
+        for id in [PASS_MARK_ACTIVE, PASS_FLOWS] {
+            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step)));
+            pass.dispatch_workgroups(workgroups, workgroups, 1);
+        }
         for (index, object) in objects.buffer.iter().enumerate() {
             if object.drag == 0.0 {
                 continue;
             }
-            pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_OBJECT, index as u32)));
+            pass.set_immediates(
+                0,
+                bytemuck::bytes_of(&params(PASS_OBJECT, index as u32, *step)),
+            );
             let footprint = footprint_workgroups(object.radius);
             pass.dispatch_workgroups(footprint, footprint, 1);
         }
         for id in [PASS_OUTFLOW_SCALE, PASS_LIMIT_FLOWS, PASS_HEIGHTS] {
-            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0)));
+            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step)));
             pass.dispatch_workgroups(workgroups, workgroups, 1);
         }
     }
 
-    pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_SAMPLE, 0)));
+    pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_SAMPLE, 0, *step)));
     pass.dispatch_workgroups(1, 1, 1);
 }
 
@@ -328,6 +342,9 @@ struct SimParams {
     id: i32,
     object: u32,
     window_origin: UVec2,
+    centre: UVec2,
+    step: u32,
+    padding: u32,
 }
 
 fn init_internal_textures(
@@ -341,9 +358,12 @@ fn init_internal_textures(
     info!("adding internal water tex");
     let material = material.get(trigger.entity).unwrap();
     let material = water_terrain_materials.get(material.0.id()).unwrap();
-    let flow_x = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
-    let flow_y = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
-    let cell_scratch = images.add(zeroed_storage_texture(WINDOW_DIM, WINDOW_DIM));
+    let flows = images.add(zeroed_storage_texture(TextureFormat::R32Uint));
+    let cell_scratch = images.add(zeroed_storage_texture(TextureFormat::R32Float));
+    let active_groups = buffers.add(ShaderBuffer::with_size(
+        ACTIVE_GROUPS_BYTES,
+        RenderAssetUsages::RENDER_WORLD,
+    ));
     let samples = buffers.add(ShaderBuffer::with_size(
         WaterSamples::min_size().get(),
         RenderAssetUsages::RENDER_WORLD,
@@ -357,24 +377,26 @@ fn init_internal_textures(
 
     commands.insert_resource(WaterHeightTexture {
         water: material.extension.water.clone(),
-        flow_x,
-        flow_y,
+        flows,
         base_height: material.extension.base.clone(),
         cell_scratch,
         samples,
+        active_groups,
     });
 }
 
-fn zeroed_storage_texture(width: u32, height: u32) -> Image {
+const ACTIVE_GROUPS_BYTES: u64 = ((CHUNK_DIM / WORKGROUP_SIZE) as u64).pow(2) * 4;
+
+fn zeroed_storage_texture(format: TextureFormat) -> Image {
     let mut image = Image::new_fill(
         Extent3d {
-            width,
-            height,
+            width: WINDOW_DIM,
+            height: WINDOW_DIM,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &0.0f32.to_le_bytes(),
-        TextureFormat::R32Float,
+        &[0; 4],
+        format,
         RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST;
@@ -396,11 +418,7 @@ fn init_water_render(
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 texture_storage_2d(
-                    TextureFormat::R32Float,
-                    bevy::render::render_resource::StorageTextureAccess::ReadWrite,
-                ),
-                texture_storage_2d(
-                    TextureFormat::R32Float,
+                    TextureFormat::R32Uint,
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 storage_buffer_read_only::<Displacements>(false),
@@ -413,6 +431,7 @@ fn init_water_render(
                     bevy::render::render_resource::StorageTextureAccess::ReadWrite,
                 ),
                 storage_buffer::<WaterSamples>(false),
+                storage_buffer_sized(false, None),
             ),
         ),
     );
@@ -461,14 +480,22 @@ fn prepare_water_bindgroups(
     if bind_group.is_some() {
         return;
     }
-    let (Some(water), Some(flow_x), Some(flow_y), Some(base), Some(cell_scratch), Some(samples)) = (
+    let (
+        Some(water),
+        Some(flows),
+        Some(base),
+        Some(cell_scratch),
+        Some(samples),
+        Some(active_groups),
+    ) = (
         gpu_images.get(&water_images.water),
-        gpu_images.get(&water_images.flow_x),
-        gpu_images.get(&water_images.flow_y),
+        gpu_images.get(&water_images.flows),
         gpu_images.get(&water_images.base_height),
         gpu_images.get(&water_images.cell_scratch),
         gpu_buffers.get(&water_images.samples),
-    ) else {
+        gpu_buffers.get(&water_images.active_groups),
+    )
+    else {
         return;
     };
 
@@ -477,29 +504,30 @@ fn prepare_water_bindgroups(
         &pipeline_cache.get_bind_group_layout(&pipeline.layout),
         &BindGroupEntries::sequential((
             &water.texture_view,
-            &flow_x.texture_view,
-            &flow_y.texture_view,
+            &flows.texture_view,
             displacement.buffer.binding().unwrap(),
             &base.texture_view,
             &cell_scratch.texture_view,
             samples.buffer.as_entire_buffer_binding(),
+            active_groups.buffer.as_entire_buffer_binding(),
         )),
     );
     commands.insert_resource(WaterBindGroup(bind_group));
 }
 
-/// The textures the simulation reads and writes, all window textures, and
-/// the buffer the per-object samples are read back through. Present once the
-/// water clipmap exists.
+/// The textures the simulation reads and writes, all window textures, the
+/// buffer the per-object samples are read back through and the one that marks
+/// which parts of the centre chunk are simulated. Present once the water
+/// clipmap exists.
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct WaterHeightTexture {
     pub water: Handle<Image>,
-    pub flow_x: Handle<Image>,
-    pub flow_y: Handle<Image>,
+    pub flows: Handle<Image>,
     pub base_height: Handle<Image>,
     pub cell_scratch: Handle<Image>,
     pub samples: Handle<ShaderBuffer>,
+    pub active_groups: Handle<ShaderBuffer>,
 }
 
 #[derive(Resource, Clone, ExtractResource)]
@@ -635,8 +663,7 @@ fn swap_chunks(
     let water = texture(&water_images.water);
     let base = texture(&water_images.base_height);
     let flows = [
-        texture(&water_images.flow_x),
-        texture(&water_images.flow_y),
+        texture(&water_images.flows),
         texture(&water_images.cell_scratch),
     ];
     let device = render_context.render_device().clone();

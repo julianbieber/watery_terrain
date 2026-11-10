@@ -230,21 +230,32 @@ fn world_chunks() -> impl Iterator<Item = ChunkCoord> {
 
 /// Where the window lies: `origin` is its lower chunk. Every window chunk
 /// lives at the texels of its world cells modulo the window size, so the
-/// origin alone says where each one is.
+/// origin alone says where each one is. `centre` is the chunk the window
+/// follows the camera with, the only one whose water is simulated; it is the
+/// window's middle chunk except where the window meets the world's edge.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct ChunkLayout {
     pub origin: ChunkCoord,
+    pub centre: ChunkCoord,
 }
 
 impl ChunkLayout {
     /// The window whose centre chunk is `chunk`, moved as little as needed to
-    /// lie inside the world.
+    /// lie inside the world; a `chunk` outside the world is moved onto its
+    /// nearest chunk.
     pub fn centred_on(chunk: ChunkCoord) -> Self {
         let last = (WORLD_CHUNKS - WINDOW_CHUNKS) as i32;
+        let edge = WORLD_CHUNKS as i32 - 1;
         Self {
             origin: ChunkCoord::new((chunk.x - 1).clamp(0, last), (chunk.z - 1).clamp(0, last)),
+            centre: ChunkCoord::new(chunk.x.clamp(0, edge), chunk.z.clamp(0, edge)),
         }
+    }
+
+    /// The centre chunk as the unsigned chunk the shaders take.
+    pub fn centre_uvec(&self) -> UVec2 {
+        UVec2::new(self.centre.x as u32, self.centre.z as u32)
     }
 
     /// The window origin as the unsigned chunk the shaders take.
@@ -285,8 +296,8 @@ impl ChunkLayout {
             }
         };
         let centre = ChunkCoord::new(
-            follow(self.origin.x + 1, camera_xz.x, camera_chunk.x),
-            follow(self.origin.z + 1, camera_xz.y, camera_chunk.z),
+            follow(self.centre.x, camera_xz.x, camera_chunk.x),
+            follow(self.centre.z, camera_xz.y, camera_chunk.z),
         );
         let next = Self::centred_on(centre);
         (next != *self).then_some(next)
@@ -544,6 +555,23 @@ mod tests {
         let after = before.recentre(centre_of(ChunkCoord::new(4, 4))).unwrap();
         assert_eq!(before.swaps_to(&after).len(), 9);
         assert_slots_are_kept(&before, &after);
+    }
+
+    #[test]
+    fn clamped_window_moves_only_its_centre_to_the_camera() {
+        let layout = ChunkLayout::centred_on(ChunkCoord::new(5, 5));
+        let moved = layout.recentre(centre_of(ChunkCoord::new(4, 5))).unwrap();
+        assert_eq!(moved.origin, layout.origin);
+        assert_eq!(moved.centre, ChunkCoord::new(4, 5));
+        assert!(layout.swaps_to(&moved).is_empty());
+    }
+
+    #[test]
+    fn centre_outside_the_world_is_moved_onto_it() {
+        assert_eq!(
+            ChunkLayout::centred_on(ChunkCoord::new(-1, 7)).centre,
+            ChunkCoord::new(0, 5)
+        );
     }
 
     #[test]
