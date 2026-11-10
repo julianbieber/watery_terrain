@@ -9,6 +9,7 @@ use bevy::{
     camera::Exposure,
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
+    light::CascadeShadowConfigBuilder,
     pbr::ExtendedMaterial,
     prelude::*,
     render::storage::ShaderBuffer,
@@ -35,6 +36,8 @@ pub struct GameplayPlugin;
 
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<Shadows>();
+        app.add_systems(Update, apply_sun_shadows);
         app.add_plugins(PhysicsPlugins::default());
         app.insert_resource(Gravity::default());
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
@@ -44,7 +47,62 @@ impl Plugin for GameplayPlugin {
     }
 }
 
-const CAMERA_SPAWN: Vec3 = Vec3::new(0.0, 100.0, 1.0);
+/// Which lights of the scene cast shadows. Read when a light appears, so it
+/// is set before the app runs.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Shadows {
+    /// The sun with its default cascades, and the camera's point light.
+    Full,
+    /// The sun alone, with a single cascade.
+    #[default]
+    Sun,
+    /// No light casts shadows.
+    Off,
+}
+
+impl Shadows {
+    /// The setting named by a `--shadows <full|sun|off>` or
+    /// `--shadows=<full|sun|off>` argument, the default without one. Errors
+    /// name a value that is none of these, or a flag with no value.
+    pub fn from_args(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
+            let value = match arg.strip_prefix("--shadows") {
+                Some("") => args.next().ok_or("--shadows needs a value")?,
+                Some(rest) if rest.starts_with('=') => rest[1..].to_string(),
+                _ => continue,
+            };
+            return match value.as_str() {
+                "full" => Ok(Self::Full),
+                "sun" => Ok(Self::Sun),
+                "off" => Ok(Self::Off),
+                other => Err(format!("--shadows takes full, sun or off, not {other:?}")),
+            };
+        }
+        Ok(Self::default())
+    }
+}
+
+fn apply_sun_shadows(
+    mut commands: Commands,
+    mut suns: Query<(Entity, &mut DirectionalLight), Added<DirectionalLight>>,
+    shadows: Res<Shadows>,
+) {
+    for (entity, mut sun) in &mut suns {
+        sun.shadow_maps_enabled = *shadows != Shadows::Off;
+        if *shadows == Shadows::Sun {
+            commands.entity(entity).insert(
+                CascadeShadowConfigBuilder {
+                    num_cascades: 1,
+                    ..default()
+                }
+                .build(),
+            );
+        }
+    }
+}
+
+const CAMERA_SPAWN: Vec3 = Vec3::new(POND.x, 100.0, POND.z + 1.0);
 
 const POND: Vec3 = Vec3::new(-26.0, 0.0, -7.0);
 
@@ -59,11 +117,11 @@ const CIRCLING_RADIUS: f32 = 2.5;
 #[derive(Component)]
 struct CirclingSphere;
 
-fn spawn_player_camera(mut commands: Commands) {
+fn spawn_player_camera(mut commands: Commands, shadows: Res<Shadows>) {
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         Camera3d::default(),
-        Transform::from_translation(CAMERA_SPAWN).looking_at(Vec3::ZERO + Vec3::Y, Vec3::Y),
+        Transform::from_translation(CAMERA_SPAWN).looking_at(POND + Vec3::Y, Vec3::Y),
         FollowTerrainMarker,
         FreeCamera::default(),
         Exposure::from_physical_camera(bevy::camera::PhysicalCameraParameters {
@@ -73,7 +131,7 @@ fn spawn_player_camera(mut commands: Commands) {
             sensor_height: 0.01866,
         }),
         PointLight {
-            shadow_maps_enabled: true,
+            shadow_maps_enabled: *shadows == Shadows::Full,
             intensity: 400000.0,
             range: 200000.0,
             color: Color::Srgba(Srgba::RED),
@@ -206,170 +264,46 @@ fn floating_sphere(
 }
 
 fn water_material(asset_server: &AssetServer) -> StandardMaterial {
-    let repeat = |settings: &mut ImageLoaderSettings| {
-        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_u: ImageAddressMode::Repeat,
-            address_mode_v: ImageAddressMode::Repeat,
-            ..ImageSamplerDescriptor::linear()
-        })
-    };
-    let linear = move |settings: &mut ImageLoaderSettings| {
-        repeat(settings);
-        settings.is_srgb = false;
-    };
-
-    let base_color: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(repeat)
-        .load("output/water/base_color.png");
-    let normal: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/water/normal.png");
-    let orm: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/water/orm.png");
-    let emissive: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(repeat)
-        .load("output/water/emissive.png");
-    let transmission: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/water/transmission.png");
-    let specular: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(repeat)
-        .load("output/water/specular.png");
-    let clearcoat: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/water/clearcoat.png");
-    let clearcoat_normal: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/water/clearcoat_normal.png");
-    let anisotropy: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/water/anisotropy.png");
-    let depth: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/water/depth.png");
-    let material = StandardMaterial {
-        base_color_texture: Some(base_color.clone()),
-        normal_map_texture: Some(normal.clone()),
-        occlusion_texture: Some(orm.clone()),
-        metallic_roughness_texture: Some(orm.clone()),
-        emissive_texture: Some(emissive.clone()),
-        specular_transmission_texture: Some(transmission.clone()),
-        thickness_texture: Some(transmission.clone()),
-        diffuse_transmission_texture: Some(transmission.clone()),
-        specular_tint_texture: Some(specular.clone()),
-        specular_texture: Some(specular.clone()),
-        clearcoat_texture: Some(clearcoat.clone()),
-        clearcoat_roughness_texture: Some(clearcoat.clone()),
-        clearcoat_normal_texture: Some(clearcoat_normal.clone()),
-        anisotropy_texture: Some(anisotropy.clone()),
-        depth_map: Some(depth.clone()),
-        emissive: LinearRgba::WHITE,
-        perceptual_roughness: 1.0,
-        metallic: 1.0,
-        reflectance: 1.0,
-        clearcoat: 1.0,
-        clearcoat_perceptual_roughness: 1.0,
-        anisotropy_strength: 1.0,
-        specular_transmission: 1.0,
-        diffuse_transmission: 1.0,
-        thickness: 1.0,
-        ..default()
-    };
-    material
+    exported_material(asset_server, "output/water", ImageAddressMode::Repeat)
 }
 
 fn land_material(asset_server: &AssetServer) -> StandardMaterial {
-    let repeat_v = |settings: &mut ImageLoaderSettings| {
-        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-            address_mode_v: ImageAddressMode::Repeat,
-            ..ImageSamplerDescriptor::linear()
-        })
-    };
-    let linear = move |settings: &mut ImageLoaderSettings| {
-        repeat_v(settings);
-        settings.is_srgb = false;
-    };
+    exported_material(
+        asset_server,
+        "output/combined",
+        ImageAddressMode::ClampToEdge,
+    )
+}
 
-    let base_color: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(repeat_v)
-        .load("output/combined/base_color.png");
-    let normal: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/combined/normal.png");
-    let orm: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/combined/orm.png");
-    let emissive: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(repeat_v)
-        .load("output/combined/emissive.png");
-    let transmission: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/combined/transmission.png");
-    let specular: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(repeat_v)
-        .load("output/combined/specular.png");
-    let clearcoat: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/combined/clearcoat.png");
-    let clearcoat_normal: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/combined/clearcoat_normal.png");
-    let anisotropy: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/combined/anisotropy.png");
-    let depth: Handle<Image> = asset_server
-        .load_builder()
-        .with_settings(linear)
-        .load("output/combined/depth.png");
-    let material = StandardMaterial {
-        base_color_texture: Some(base_color.clone()),
-        normal_map_texture: Some(normal.clone()),
+fn exported_material(
+    asset_server: &AssetServer,
+    dir: &str,
+    address_mode_u: ImageAddressMode,
+) -> StandardMaterial {
+    let load = |name: &str, is_srgb: bool| -> Handle<Image> {
+        asset_server
+            .load_builder()
+            .with_settings(move |settings: &mut ImageLoaderSettings| {
+                settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u,
+                    address_mode_v: ImageAddressMode::Repeat,
+                    ..ImageSamplerDescriptor::linear()
+                });
+                settings.is_srgb = is_srgb;
+            })
+            .load(format!("{dir}/{name}.png"))
+    };
+    let orm = load("orm", false);
+    StandardMaterial {
+        base_color_texture: Some(load("base_color", true)),
+        normal_map_texture: Some(load("normal", false)),
         occlusion_texture: Some(orm.clone()),
-        metallic_roughness_texture: Some(orm.clone()),
-        emissive_texture: Some(emissive.clone()),
-        specular_transmission_texture: Some(transmission.clone()),
-        thickness_texture: Some(transmission.clone()),
-        diffuse_transmission_texture: Some(transmission.clone()),
-        specular_tint_texture: Some(specular.clone()),
-        specular_texture: Some(specular.clone()),
-        clearcoat_texture: Some(clearcoat.clone()),
-        clearcoat_roughness_texture: Some(clearcoat.clone()),
-        clearcoat_normal_texture: Some(clearcoat_normal.clone()),
-        anisotropy_texture: Some(anisotropy.clone()),
-        depth_map: Some(depth.clone()),
-        emissive: LinearRgba::WHITE,
+        metallic_roughness_texture: Some(orm),
         perceptual_roughness: 1.0,
         metallic: 1.0,
         reflectance: 1.0,
-        clearcoat: 1.0,
-        clearcoat_perceptual_roughness: 1.0,
-        anisotropy_strength: 1.0,
-        specular_transmission: 1.0,
-        diffuse_transmission: 1.0,
-        thickness: 1.0,
         ..default()
-    };
-    material
+    }
 }
 
 fn circle_spheres(mut spheres: Query<&mut LinearVelocity, With<CirclingSphere>>, time: Res<Time>) {
@@ -377,5 +311,31 @@ fn circle_spheres(mut spheres: Query<&mut LinearVelocity, With<CirclingSphere>>,
     for mut velocity in &mut spheres {
         velocity.0.x = -angle.sin() * CIRCLING_SPEED;
         velocity.0.z = angle.cos() * CIRCLING_SPEED;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Shadows, String> {
+        Shadows::from_args(args.iter().map(|a| a.to_string()))
+    }
+
+    #[test]
+    fn no_flag_gives_the_default() {
+        assert_eq!(parse(&["--other"]), Ok(Shadows::Sun));
+    }
+
+    #[test]
+    fn value_is_read_after_a_space_or_an_equals_sign() {
+        assert_eq!(parse(&["--shadows", "off"]), Ok(Shadows::Off));
+        assert_eq!(parse(&["--shadows=full"]), Ok(Shadows::Full));
+    }
+
+    #[test]
+    fn unknown_or_missing_value_is_an_error() {
+        assert!(parse(&["--shadows=soft"]).is_err());
+        assert!(parse(&["--shadows"]).is_err());
     }
 }
