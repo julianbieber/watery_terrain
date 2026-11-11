@@ -1,7 +1,7 @@
 (
     version: 6,
     chunk_size: (1024, 1024),
-    chunks: (6, 6),
+    chunks: (16, 16),
     seed: 1,
     water_spec: Some((
         height: ("height"),
@@ -13,38 +13,35 @@
             name: ("height"),
             export: false,
             params: {
+                "climb": [
+                    450.0,
+                ],
+                "coast": [
+                    0.72,
+                ],
                 "feature": [
-                    130.0,
+                    260.0,
                 ],
-                "floor_depth": [
-                    6.0,
-                ],
-                "head_width": [
-                    7.0,
-                ],
-                "mouth_width": [
-                    20.0,
+                "lowland": [
+                    4.0,
                 ],
                 "octaves": [
-                    5.0,
-                ],
-                "relief": [
-                    12.0,
-                ],
-                "rise": [
-                    0.09,
-                ],
-                "sea_level": [
-                    10.0,
-                ],
-                "shoulder": [
                     6.0,
                 ],
-                "wall": [
-                    24.0,
+                "peak": [
+                    170.0,
+                ],
+                "sea_depth": [
+                    14.0,
+                ],
+                "sea_level": [
+                    20.0,
+                ],
+                "shelf": [
+                    90.0,
                 ],
                 "wander": [
-                    75.0,
+                    140.0,
                 ],
             },
         ),

@@ -491,6 +491,8 @@ mod tests {
     use super::*;
     use crate::grid::corner_of;
 
+    const EDGE: i32 = WORLD_CHUNKS as i32 - 1;
+
     fn centre_of(chunk: ChunkCoord) -> Vec2 {
         corner_of(chunk_origin(chunk)) + Vec2::splat(CHUNK_DIM as f32 * CELL_SIZE / 2.0)
     }
@@ -510,8 +512,8 @@ mod tests {
     #[test]
     fn centred_on_clamps_to_the_world() {
         assert_eq!(
-            ChunkLayout::centred_on(ChunkCoord::new(0, 5)).origin,
-            ChunkCoord::new(0, 3)
+            ChunkLayout::centred_on(ChunkCoord::new(0, EDGE)).origin,
+            ChunkCoord::new(0, EDGE - 2)
         );
         assert_eq!(
             ChunkLayout::centred_on(ChunkCoord::new(3, 3)).origin,
@@ -559,25 +561,30 @@ mod tests {
 
     #[test]
     fn clamped_window_moves_only_its_centre_to_the_camera() {
-        let layout = ChunkLayout::centred_on(ChunkCoord::new(5, 5));
-        let moved = layout.recentre(centre_of(ChunkCoord::new(4, 5))).unwrap();
+        let layout = ChunkLayout::centred_on(ChunkCoord::new(EDGE, EDGE));
+        let moved = layout
+            .recentre(centre_of(ChunkCoord::new(EDGE - 1, EDGE)))
+            .unwrap();
         assert_eq!(moved.origin, layout.origin);
-        assert_eq!(moved.centre, ChunkCoord::new(4, 5));
+        assert_eq!(moved.centre, ChunkCoord::new(EDGE - 1, EDGE));
         assert!(layout.swaps_to(&moved).is_empty());
     }
 
     #[test]
     fn centre_outside_the_world_is_moved_onto_it() {
         assert_eq!(
-            ChunkLayout::centred_on(ChunkCoord::new(-1, 7)).centre,
-            ChunkCoord::new(0, 5)
+            ChunkLayout::centred_on(ChunkCoord::new(-1, EDGE + 2)).centre,
+            ChunkCoord::new(0, EDGE)
         );
     }
 
     #[test]
     fn clamped_window_stays_while_the_camera_is_inside_it() {
-        let layout = ChunkLayout::centred_on(ChunkCoord::new(5, 5));
-        assert_eq!(layout.recentre(centre_of(ChunkCoord::new(5, 5))), None);
+        let layout = ChunkLayout::centred_on(ChunkCoord::new(EDGE, EDGE));
+        assert_eq!(
+            layout.recentre(centre_of(ChunkCoord::new(EDGE, EDGE))),
+            None
+        );
     }
 
     fn committed_terrain() -> TerrainDir {
@@ -632,7 +639,7 @@ mod tests {
         for z in 0..CHUNK_DIM {
             assert_eq!(left.get(z, CHUNK_DIM), right.get(z, 0));
         }
-        let edge = world.collider_heights(ChunkCoord::new(5, 0));
+        let edge = world.collider_heights(ChunkCoord::new(EDGE, 0));
         assert_eq!(edge.get(3, CHUNK_DIM), edge.get(3, CHUNK_DIM - 1));
     }
 

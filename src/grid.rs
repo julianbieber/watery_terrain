@@ -11,7 +11,7 @@ use bevy::{
 pub const CHUNK_DIM: u32 = 1024;
 
 /// Chunks along each side of the world.
-pub const WORLD_CHUNKS: u32 = 6;
+pub const WORLD_CHUNKS: u32 = 16;
 
 /// Chunks along each side of the active window that is drawn, collides and is
 /// simulated.
