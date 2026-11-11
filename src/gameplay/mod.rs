@@ -79,9 +79,9 @@ fn apply_sun_shadows(
     }
 }
 
-const CAMERA_SPAWN: Vec3 = Vec3::new(POND.x, 100.0, POND.z + 1.0);
+const CAMERA_SPAWN: Vec3 = Vec3::new(POND.x, POND.y + 100.0, POND.z + 1.0);
 
-const POND: Vec3 = Vec3::new(-26.0, 0.0, -7.0);
+const POND: Vec3 = Vec3::new(-49.0, 65.0, 18.0);
 
 const DROP_HEIGHT: f32 = 23.0;
 

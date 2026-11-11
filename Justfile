@@ -97,7 +97,7 @@ wesl-deps:
 	        ("MATERIAL_BIND_GROUP", 3),
 	        ("CELLS_PER_METER", 10),
 	        ("CHUNK_DIM", 1024),
-	        ("WORLD_CHUNKS", 6),
+	        ("WORLD_CHUNKS", 16),
 	        ("WINDOW_CHUNKS", 3),
 	        ("EDGE_FADE_CELLS", 100),
 	        ("WORKGROUP_SIZE", 8),

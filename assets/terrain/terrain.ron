@@ -1,7 +1,7 @@
 (
     version: 3,
     chunk_size: (1024, 1024),
-    chunks: (6, 6),
+    chunks: (16, 16),
     layers: [
         (
             file: "layer_000",
@@ -9,8 +9,8 @@
             height: 1024,
             channels: [
                 (
-                    low: 4.0,
-                    high: 41.18336,
+                    low: 6.0,
+                    high: 154.01552,
                     encoding: Linear,
                 ),
             ],
@@ -22,7 +22,7 @@
             channels: [
                 (
                     low: 0.0,
-                    high: 6.0,
+                    high: 23.464737,
                     encoding: Log,
                 ),
                 (
@@ -37,7 +37,7 @@
                 ),
                 (
                     low: 0.0,
-                    high: 35034520.0,
+                    high: 199454240.0,
                     encoding: Log,
                 ),
             ],
@@ -53,7 +53,7 @@
         ),
     ],
     water: Some((
-        lakes: 605,
+        lakes: 5951,
         layer: 1,
     )),
 )
