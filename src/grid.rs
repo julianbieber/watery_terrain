@@ -97,7 +97,6 @@ impl Plugin for GridPlugin {
 mod tests {
     use super::*;
 
-    // The world is centred on the origin, so its middle cell sits at world (0, 0).
     #[test]
     fn corner_of_centres_the_world_on_the_origin() {
         assert_eq!(corner_of(UVec2::splat(WORLD_DIM / 2)), Vec2::ZERO);
@@ -107,7 +106,6 @@ mod tests {
         );
     }
 
-    // A position on a chunk seam belongs to the chunk above it, and positions outside the world map to chunks outside it.
     #[test]
     fn chunk_of_splits_on_seams_and_reaches_outside() {
         let seam = corner_of(UVec2::new(3 * CHUNK_DIM, 2 * CHUNK_DIM));
@@ -122,7 +120,6 @@ mod tests {
         );
     }
 
-    // chunk_of and chunk_origin are inverses for every chunk of the world.
     #[test]
     fn chunk_origin_inverts_chunk_of() {
         for x in 0..WORLD_CHUNKS as i32 {
@@ -133,7 +130,6 @@ mod tests {
         }
     }
 
-    // A chunk's slot is its coordinate mod WINDOW_CHUNKS, and its cells keep their offset inside the slot.
     #[test]
     fn texel_of_places_each_chunk_in_its_slot() {
         let origin = chunk_origin(ChunkCoord::new(4, 5));
