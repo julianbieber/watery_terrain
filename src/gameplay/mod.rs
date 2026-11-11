@@ -6,7 +6,7 @@ use avian3d::{
 };
 use bevy::{
     asset::RenderAssetUsages,
-    camera::Exposure,
+    camera::{Exposure, visibility::NoFrustumCulling},
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     light::CascadeShadowConfigBuilder,
@@ -163,6 +163,7 @@ fn spawn_plane_dbg(
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
+        NoFrustumCulling,
         Mesh3d(meshes.add(mesh)),
         WaterMarker,
         MeshMaterial3d(materials.add(ExtendedMaterial {
@@ -179,6 +180,7 @@ fn spawn_plane_dbg(
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         ClipmapMarker,
+        NoFrustumCulling,
         Mesh3d(meshes.add(rock_mesh)),
         MeshMaterial3d(
             rock_materials.add(ExtendedMaterial::<StandardMaterial, TerrainMaterial> {
