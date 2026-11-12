@@ -129,9 +129,9 @@ fn spawn_plane_dbg(
     asset_server: Res<AssetServer>,
 ) {
     let clipmap = TerrainHeightMapMesh {
-        smallest_quad: 0.05,
+        smallest_quad: 0.1,
         rings: 5,
-        smallest_quad_count: 16 * 10,
+        smallest_quad_count: 160,
     };
 
     let world = WorldChunks::load();
