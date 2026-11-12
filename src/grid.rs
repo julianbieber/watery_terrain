@@ -13,9 +13,9 @@ pub const CHUNK_DIM: u32 = 1024;
 /// Chunks along each side of the world.
 pub const WORLD_CHUNKS: u32 = 16;
 
-/// Chunks along each side of the active window that is drawn, collides and is
-/// simulated.
-pub const WINDOW_CHUNKS: u32 = 3;
+/// Chunks along each side of the active window that is drawn and collides;
+/// only its centre chunk is simulated.
+pub const WINDOW_CHUNKS: u32 = 5;
 
 /// Cells along each side of the world.
 pub const WORLD_DIM: u32 = WORLD_CHUNKS * CHUNK_DIM;
@@ -133,10 +133,10 @@ mod tests {
     #[test]
     fn texel_of_places_each_chunk_in_its_slot() {
         let origin = chunk_origin(ChunkCoord::new(4, 5));
-        assert_eq!(texel_of(origin), UVec2::new(1, 2) * CHUNK_DIM);
+        assert_eq!(texel_of(origin), UVec2::new(4, 0) * CHUNK_DIM);
         assert_eq!(
             texel_of(origin + UVec2::new(7, 9)),
-            UVec2::new(CHUNK_DIM + 7, 2 * CHUNK_DIM + 9)
+            UVec2::new(4 * CHUNK_DIM + 7, 9)
         );
     }
 }

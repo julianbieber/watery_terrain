@@ -1,6 +1,6 @@
-//! The chunked world: every chunk kept in memory, the 3x3 window of chunks
-//! that is drawn, collides and is simulated, and moving that window under the
-//! camera without touching the chunks that stay in it.
+//! The chunked world: every chunk kept in memory, the square window of chunks
+//! that is drawn and collides and whose centre chunk is simulated, and moving
+//! that window under the camera without touching the chunks that stay in it.
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
@@ -36,6 +36,11 @@ pub const SHIFT_OVERLAP_METRES: f32 = 10.0;
 /// Staging buffers for the water of leaving chunks: one per window chunk, so
 /// a single shift can never run out.
 pub const STAGING_BUFFERS: u32 = WINDOW_CHUNKS * WINDOW_CHUNKS;
+
+const _: () = assert!(
+    STAGING_BUFFERS <= u32::BITS,
+    "StagingBuffers::in_use_mask has one bit per staging buffer"
+);
 
 /// Bytes of one chunk's water.
 pub const CHUNK_BYTES: u64 = (CHUNK_DIM as u64) * (CHUNK_DIM as u64) * 4;
@@ -247,8 +252,12 @@ impl ChunkLayout {
     pub fn centred_on(chunk: ChunkCoord) -> Self {
         let last = (WORLD_CHUNKS - WINDOW_CHUNKS) as i32;
         let edge = WORLD_CHUNKS as i32 - 1;
+        let half = WINDOW_CHUNKS as i32 / 2;
         Self {
-            origin: ChunkCoord::new((chunk.x - 1).clamp(0, last), (chunk.z - 1).clamp(0, last)),
+            origin: ChunkCoord::new(
+                (chunk.x - half).clamp(0, last),
+                (chunk.z - half).clamp(0, last),
+            ),
             centre: ChunkCoord::new(chunk.x.clamp(0, edge), chunk.z.clamp(0, edge)),
         }
     }
@@ -513,11 +522,11 @@ mod tests {
     fn centred_on_clamps_to_the_world() {
         assert_eq!(
             ChunkLayout::centred_on(ChunkCoord::new(0, EDGE)).origin,
-            ChunkCoord::new(0, EDGE - 2)
+            ChunkCoord::new(0, EDGE - 4)
         );
         assert_eq!(
             ChunkLayout::centred_on(ChunkCoord::new(3, 3)).origin,
-            ChunkCoord::new(2, 2)
+            ChunkCoord::new(1, 1)
         );
     }
 
@@ -533,7 +542,7 @@ mod tests {
         let moved = layout
             .recentre(Vec2::new(seam_x + SHIFT_OVERLAP_METRES + 1.0, z))
             .unwrap();
-        assert_eq!(moved.origin, ChunkCoord::new(3, 2));
+        assert_eq!(moved.origin, ChunkCoord::new(2, 1));
     }
 
     #[test]
@@ -547,15 +556,15 @@ mod tests {
     fn diagonal_shift_keeps_the_staying_chunks_in_their_slots() {
         let before = ChunkLayout::centred_on(ChunkCoord::new(2, 2));
         let after = ChunkLayout::centred_on(ChunkCoord::new(3, 3));
-        assert_eq!(before.swaps_to(&after).len(), 5);
+        assert_eq!(before.swaps_to(&after).len(), 9);
         assert_slots_are_kept(&before, &after);
     }
 
     #[test]
     fn far_jump_replaces_every_chunk() {
         let before = ChunkLayout::centred_on(ChunkCoord::new(1, 1));
-        let after = before.recentre(centre_of(ChunkCoord::new(4, 4))).unwrap();
-        assert_eq!(before.swaps_to(&after).len(), 9);
+        let after = before.recentre(centre_of(ChunkCoord::new(8, 8))).unwrap();
+        assert_eq!(before.swaps_to(&after).len(), 25);
         assert_slots_are_kept(&before, &after);
     }
 

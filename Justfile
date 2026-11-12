@@ -98,7 +98,7 @@ wesl-deps:
 	        ("CELLS_PER_METER", 10),
 	        ("CHUNK_DIM", 1024),
 	        ("WORLD_CHUNKS", 16),
-	        ("WINDOW_CHUNKS", 3),
+	        ("WINDOW_CHUNKS", 5),
 	        ("EDGE_FADE_CELLS", 100),
 	        ("WORKGROUP_SIZE", 8),
 	        ("MAX_DISPLACEMENTS", 64),
