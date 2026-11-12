@@ -70,7 +70,7 @@ fn place(model: mat4x4<f32>, local_xz: vec2f, quad: f32, shape: Shape) -> Placem
 // predict its height, per axis. Zero where it has none to move towards.
 fn coarse_offset(placement: Placement) -> vec2f {
     let quad_cells = placement.quad * grid::CELLS_PER_METER;
-    if placement.blend <= 0.0 || quad_cells < 1.0 {
+    if placement.blend <= 0.0 {
         return vec2f(0.0);
     }
     let index = round(placement.world_xz / placement.quad);
