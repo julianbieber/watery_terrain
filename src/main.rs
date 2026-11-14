@@ -18,8 +18,15 @@ use bevy_sky_gradient::{
 };
 
 use crate::{
-    chunks::ChunkPlugin, gameplay::Shadows, grid::GridPlugin, render::TerrainRanderPlugin,
-    screens::ScreenPlugin, water_sim::WaterSimPlugin,
+    chunks::ChunkPlugin,
+    gameplay::Shadows,
+    grid::GridPlugin,
+    render::TerrainRanderPlugin,
+    screens::ScreenPlugin,
+    water_sim::{
+        DEFAULT_WIND_DEGREES, DEFAULT_WIND_HEAD, DEFAULT_WIND_SPEED, DEFAULT_WIND_WAVELENGTH,
+        WaterSimPlugin, Wind,
+    },
 };
 
 mod chunks;
@@ -38,6 +45,51 @@ struct Args {
     /// Which lights cast shadows.
     #[arg(long, value_enum, default_value_t)]
     shadows: Shadows,
+    /// Direction the wind's waves travel towards, in degrees from world +x
+    /// towards +z.
+    #[arg(long, default_value_t = DEFAULT_WIND_DEGREES)]
+    wind_direction: f32,
+    /// Distance between the wind's wave crests, in metres; at least 1.
+    #[arg(long, default_value_t = DEFAULT_WIND_WAVELENGTH, value_parser = at_least(1.0))]
+    wind_wavelength: f32,
+    /// Speed of the wind's wave crests, in metres per second; below 3.
+    #[arg(long, default_value_t = DEFAULT_WIND_SPEED, value_parser = within(0.0, 3.0))]
+    wind_speed: f32,
+    /// Pressure head the wind pushes the water with, in metres of water; 0
+    /// is calm.
+    #[arg(long, default_value_t = DEFAULT_WIND_HEAD, value_parser = at_least(0.0))]
+    wind_head: f32,
+}
+
+impl Args {
+    fn wind(&self) -> Wind {
+        Wind::towards_degrees(
+            self.wind_direction,
+            self.wind_wavelength,
+            self.wind_speed,
+            self.wind_head,
+        )
+    }
+}
+
+fn at_least(min: f32) -> impl Fn(&str) -> Result<f32, String> + Clone + Send + Sync + 'static {
+    within(min, f32::INFINITY)
+}
+
+fn within(
+    min: f32,
+    below: f32,
+) -> impl Fn(&str) -> Result<f32, String> + Clone + Send + Sync + 'static {
+    move |text| {
+        let value: f32 = text.parse().map_err(|e| format!("{e}"))?;
+        if value >= min && value < below {
+            Ok(value)
+        } else if below.is_finite() {
+            Err(format!("must be at least {min} and below {below}"))
+        } else {
+            Err(format!("must be at least {min}"))
+        }
+    }
 }
 
 fn main() -> AppExit {
@@ -100,6 +152,7 @@ fn main() -> AppExit {
             TerrainRanderPlugin,
         ))
         .insert_resource(args.shadows)
+        .insert_resource(args.wind())
         .run()
 }
 
@@ -129,6 +182,42 @@ mod tests {
             Args::parse_from(["demo", "--shadows=full"]).shadows,
             Shadows::Full
         );
+    }
+
+    #[test]
+    fn wind_defaults_to_the_sims_default_wind() {
+        assert_eq!(Args::parse_from(["demo"]).wind(), Wind::default());
+    }
+
+    #[test]
+    fn wind_direction_is_degrees_from_x_towards_z() {
+        let wind = Args::parse_from(["demo", "--wind-direction", "90"]).wind();
+        assert!(wind.direction.abs_diff_eq(Vec2::Y, 1e-6));
+    }
+
+    #[test]
+    fn wind_takes_wavelength_speed_and_head() {
+        let wind = Args::parse_from([
+            "demo",
+            "--wind-wavelength=6",
+            "--wind-speed=0.8",
+            "--wind-head=0.02",
+        ])
+        .wind();
+        assert_eq!((wind.wavelength, wind.speed, wind.head), (6.0, 0.8, 0.02));
+    }
+
+    #[test]
+    fn wind_outside_what_the_sim_carries_is_rejected() {
+        for args in [
+            ["demo", "--wind-wavelength=0.5"],
+            ["demo", "--wind-speed=3"],
+            ["demo", "--wind-speed=-1"],
+            ["demo", "--wind-head=-0.01"],
+            ["demo", "--wind-head=calm"],
+        ] {
+            assert!(Args::try_parse_from(args).is_err(), "{args:?}");
+        }
     }
 
     #[test]

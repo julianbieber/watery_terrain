@@ -56,6 +56,11 @@ struct SimParams {
     window_origin: vec2u,
     centre: vec2u,
     step: u32,
+    wind_phase: f32,
+    wind_direction: vec2f,
+    wind_cycles_per_meter: f32,
+    wind_head: f32,
+    wind_speed: f32,
     padding: u32,
 };
 var<immediate> sim: SimParams;
@@ -85,6 +90,8 @@ const MIN_FRICTION_DEPTH: f32 = 0.001;
 const BULK_VISCOSITY: f32 = 0.1;
 
 const OUTFLOW_MARGIN: f32 = 0.9999;
+
+const TAU: f32 = 6.2831855;
 
 const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
 
@@ -187,12 +194,22 @@ fn depth_change(cell: vec2i) -> f32 {
     return textureLoad(cell_scratch, texel(cell)).x;
 }
 
-fn next_flow(flow: f32, from_cell: vec2f, to_cell: vec2f, rate_difference: f32) -> f32 {
+fn wind_head(cell: vec2i) -> f32 {
+    let cycles = dot(sim.wind_direction, world_of_window(vec2f(cell))) * sim.wind_cycles_per_meter - sim.wind_phase;
+    return sim.wind_head * sin(TAU * fract(cycles));
+}
+
+fn wind_response(depth: f32) -> f32 {
+    let wave_speed_squared = GRAVITY * min(depth, MAX_WAVE_DEPTH);
+    return min(abs(1.0 - sim.wind_speed * sim.wind_speed / wave_speed_squared), 1.0);
+}
+
+fn next_flow(flow: f32, from_cell: vec2f, to_cell: vec2f, rate_difference: f32, wind_drop: f32) -> f32 {
     let depth = face_depth(from_cell, to_cell);
     if depth <= 0.0 {
         return 0.0;
     }
-    let drop = (from_cell.x + from_cell.y) - (to_cell.x + to_cell.y);
+    let drop = (from_cell.x + from_cell.y) - (to_cell.x + to_cell.y) + wind_drop * wind_response(depth);
     let driven = flow + FLOW_GAIN * min(depth, MAX_WAVE_DEPTH) * drop + BULK_VISCOSITY * rate_difference;
     let friction = GRAVITY * STEP_SECONDS * MANNING_ROUGHNESS * MANNING_ROUGHNESS
         * abs(flow) * CELL_SPEED / pow(max(depth, MIN_FRICTION_DEPTH), 7.0 / 3.0);
@@ -249,16 +266,19 @@ fn update_flows(invocation_id: vec3<u32>) {
     let local = e - active_first();
     let here = get_height(e);
     let here_rate = depth_change(e);
+    let here_wind = wind_head(e);
     var f = vec2f(0.0);
 
     if local.x > 0 {
         let midpoint = vec2f(f32(e.x), f32(e.y) + 0.5);
-        f.x = next_flow(get_flow_x(e), get_height(e - vec2i(1, 0)), here, depth_change(e - vec2i(1, 0)) - here_rate) * edge_fade(midpoint);
+        let minus_x = e - vec2i(1, 0);
+        f.x = next_flow(get_flow_x(e), get_height(minus_x), here, depth_change(minus_x) - here_rate, wind_head(minus_x) - here_wind) * edge_fade(midpoint);
     }
 
     if local.y > 0 {
         let midpoint = vec2f(f32(e.x) + 0.5, f32(e.y));
-        f.y = next_flow(get_flow_y(e), get_height(e - vec2i(0, 1)), here, depth_change(e - vec2i(0, 1)) - here_rate) * edge_fade(midpoint);
+        let minus_z = e - vec2i(0, 1);
+        f.y = next_flow(get_flow_y(e), get_height(minus_z), here, depth_change(minus_z) - here_rate, wind_head(minus_z) - here_wind) * edge_fade(midpoint);
     }
     set_flows(e, f);
 }
