@@ -99,6 +99,8 @@ impl Plugin for WaterSimPlugin {
         app.add_plugins(ExtractResourcePlugin::<WaterSimSteps>::default());
         app.add_plugins(ExtractResourcePlugin::<ChunkLayout>::default());
         app.add_plugins(ExtractResourcePlugin::<StagingBuffers>::default());
+        app.add_plugins(ExtractResourcePlugin::<Wind>::default());
+        app.init_resource::<Wind>();
         let ready = ChunkGpuReady::default();
         app.insert_resource(ready.clone());
         app.init_resource::<WaterSimSteps>();
@@ -142,6 +144,56 @@ impl Plugin for WaterSimPlugin {
         app.add_observer(init_internal_textures);
     }
 }
+
+/// The wind over the simulated water: a pressure head of `head` metres of
+/// water, rising and falling in crests `wavelength` metres apart, travels at
+/// `speed` metres per second towards `direction`, and pushes waves along with
+/// it. `direction` is a unit vector in world xz; `speed` stays below the
+/// sim's 3 m/s wave speed limit, and `wavelength` above one metre, for waves
+/// the grid can carry. Read by every sim step.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, ExtractResource)]
+#[extract_app(RenderApp)]
+pub struct Wind {
+    pub direction: Vec2,
+    pub wavelength: f32,
+    pub speed: f32,
+    pub head: f32,
+}
+
+impl Wind {
+    /// Wind towards `degrees` counted from world +x towards +z.
+    pub fn towards_degrees(degrees: f32, wavelength: f32, speed: f32, head: f32) -> Self {
+        Self {
+            direction: Vec2::from_angle(degrees.to_radians()),
+            wavelength,
+            speed,
+            head,
+        }
+    }
+}
+
+impl Default for Wind {
+    fn default() -> Self {
+        Self::towards_degrees(
+            DEFAULT_WIND_DEGREES,
+            DEFAULT_WIND_WAVELENGTH,
+            DEFAULT_WIND_SPEED,
+            DEFAULT_WIND_HEAD,
+        )
+    }
+}
+
+/// Direction of the default [`Wind`], in degrees from world +x towards +z.
+pub const DEFAULT_WIND_DEGREES: f32 = 0.0;
+
+/// Crest spacing of the default [`Wind`], in metres.
+pub const DEFAULT_WIND_WAVELENGTH: f32 = 4.0;
+
+/// Speed of the default [`Wind`]'s crests, in metres per second.
+pub const DEFAULT_WIND_SPEED: f32 = 1.25;
+
+/// Pressure head of the default [`Wind`], in metres of water.
+pub const DEFAULT_WIND_HEAD: f32 = 0.01;
 
 /// A sphere of `radius` metres that displaces water, is lifted by it, and
 /// exchanges momentum with it. Only the first 64 such objects take part.
@@ -282,6 +334,8 @@ fn run_water_sim(
     steps: If<Res<WaterSimSteps>>,
     layout: If<Res<ChunkLayout>>,
     objects: If<Res<DisplacementBufferMain>>,
+    wind: If<Res<Wind>>,
+    mut wind_phase: Local<f32>,
 ) {
     let window_origin = layout.origin_uvec();
     let centre = layout.centre_uvec();
@@ -296,18 +350,25 @@ fn run_water_sim(
     pass.set_pipeline(update_pipeline);
 
     let workgroups = CHUNK_DIM / WORKGROUP_SIZE;
-    let params = |id, object, step| SimParams {
+    let wind_cycles_per_step = wind.speed / wind.wavelength * STEP_SECONDS;
+    let params = |id, object, step, wind_phase| SimParams {
         id,
         object,
         window_origin,
         centre,
         step,
+        wind_phase,
+        wind_direction: wind.direction,
+        wind_cycles_per_meter: 1.0 / wind.wavelength,
+        wind_head: wind.head,
+        wind_speed: wind.speed,
         padding: 0,
     };
     for _ in 0..steps.0.due {
         *step = step.wrapping_add(1).max(1);
+        *wind_phase = (*wind_phase + wind_cycles_per_step).rem_euclid(1.0);
         for id in [PASS_MARK_ACTIVE, PASS_FLOWS] {
-            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step)));
+            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step, *wind_phase)));
             pass.dispatch_workgroups(workgroups, workgroups, 1);
         }
         for (index, object) in objects.buffer.iter().enumerate() {
@@ -316,18 +377,21 @@ fn run_water_sim(
             }
             pass.set_immediates(
                 0,
-                bytemuck::bytes_of(&params(PASS_OBJECT, index as u32, *step)),
+                bytemuck::bytes_of(&params(PASS_OBJECT, index as u32, *step, *wind_phase)),
             );
             let footprint = footprint_workgroups(object.radius);
             pass.dispatch_workgroups(footprint, footprint, 1);
         }
         for id in [PASS_OUTFLOW_SCALE, PASS_LIMIT_FLOWS, PASS_HEIGHTS] {
-            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step)));
+            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step, *wind_phase)));
             pass.dispatch_workgroups(workgroups, workgroups, 1);
         }
     }
 
-    pass.set_immediates(0, bytemuck::bytes_of(&params(PASS_SAMPLE, 0, *step)));
+    pass.set_immediates(
+        0,
+        bytemuck::bytes_of(&params(PASS_SAMPLE, 0, *step, *wind_phase)),
+    );
     pass.dispatch_workgroups(1, 1, 1);
 }
 
@@ -344,6 +408,11 @@ struct SimParams {
     window_origin: UVec2,
     centre: UVec2,
     step: u32,
+    wind_phase: f32,
+    wind_direction: Vec2,
+    wind_cycles_per_meter: f32,
+    wind_head: f32,
+    wind_speed: f32,
     padding: u32,
 }
 
