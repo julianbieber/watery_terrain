@@ -6211,9 +6211,10 @@ dependencies = [
 [[package]]
 name = "watershed"
 version = "0.1.0"
-source = "git+https://github.com/julianbieber/watershed.git?rev=29ce1ffc89ea79392cf464082bed4708cdaed651#29ce1ffc89ea79392cf464082bed4708cdaed651"
+source = "git+https://github.com/julianbieber/watershed.git?rev=25af96f590b0b01cb2ef4e930c609fbeeeeea2bc#25af96f590b0b01cb2ef4e930c609fbeeeeea2bc"
 dependencies = [
  "glam 0.33.12",
+ "miniz_oxide 0.8.9",
  "png",
  "ron",
  "serde",

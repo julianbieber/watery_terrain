@@ -134,3 +134,48 @@ run-web:
 	RUSTFLAGS="{{RUSTFLAGS_BASE}}" \
 	RUSTDOCFLAGS="{{RUSTDOCFLAGS_BASE}}" \
 	bevy run web
+
+TERRAIN_DIR := "assets/terrain"
+TERRAIN_PIN := "assets/terrain.release"
+TERRAIN_REPO := "julianbieber/watery_terrain"
+
+# Download the terrain export assets/terrain.release pins; no-op if present, fails on a checksum mismatch
+terrain-fetch:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	read -r tag sum < {{TERRAIN_PIN}}
+	stamp={{TERRAIN_DIR}}/.release
+	if [[ -f $stamp && "$(cat "$stamp")" == "$tag $sum" ]]; then
+	    echo "terrain $tag already present"
+	    exit 0
+	fi
+	tmp=$(mktemp -d)
+	trap 'rm -rf "$tmp"' EXIT
+	curl -fsSL --retry 3 -o "$tmp/terrain.tar" \
+	    "https://github.com/{{TERRAIN_REPO}}/releases/download/$tag/terrain.tar"
+	echo "$sum  $tmp/terrain.tar" | sha256sum -c --quiet
+	rm -f {{TERRAIN_DIR}}/terrain.ron {{TERRAIN_DIR}}/chunk_*
+	tar -xf "$tmp/terrain.tar" -C {{TERRAIN_DIR}}
+	echo "$tag $sum" > "$stamp"
+	echo "terrain $tag fetched"
+
+# Publish assets/terrain as a release tagged by its checksum and pin it in assets/terrain.release
+terrain-publish:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	tmp=$(mktemp -d)
+	trap 'rm -rf "$tmp"' EXIT
+	(cd {{TERRAIN_DIR}} && tar -cf "$tmp/terrain.tar" --sort=name --owner=0 --group=0 \
+	    --numeric-owner --mtime=@0 terrain.ron chunk_*)
+	sum=$(sha256sum "$tmp/terrain.tar" | cut -d' ' -f1)
+	tag="terrain-${sum:0:12}"
+	if gh release view "$tag" --repo {{TERRAIN_REPO}} >/dev/null 2>&1; then
+	    echo "release $tag already published"
+	else
+	    rev=$(rg -o 'watershed" = "rev:([0-9a-f]+)' -r '$1' mise.toml)
+	    gh release create "$tag" "$tmp/terrain.tar" --repo {{TERRAIN_REPO}} --latest=false \
+	        --title "$tag" --notes "Terrain export for assets/terrain, baked with watershed $rev."
+	fi
+	echo "$tag $sum" > {{TERRAIN_PIN}}
+	echo "$tag $sum" > {{TERRAIN_DIR}}/.release
+	echo "pinned $tag"
