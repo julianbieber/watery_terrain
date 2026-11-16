@@ -1,5 +1,6 @@
-//! The shallow-water simulation on the GPU over the chunk the window follows
-//! the camera with, and how objects push the water and are lifted by it.
+//! The shallow-water simulation on the GPU over the window's chunks, the water
+//! sources and sinks add and take, and how objects push the water and are
+//! lifted by it.
 
 use avian3d::prelude::{
     Forces, Gravity, LinearVelocity, ReadRigidBodyForces, WriteRigidBodyForces,
@@ -42,7 +43,7 @@ use std::{
 
 use crate::{
     chunks::{ChunkLayout, ChunkSwap, Parked, StagingBuffers, SwapQueue, park_objects},
-    grid::{CELLS_PER_METER, CHUNK_DIM, WINDOW_CHUNKS, WINDOW_DIM},
+    grid::{CELLS_PER_METER, CHUNK_DIM, WINDOW_CHUNKS, WINDOW_DIM, chunk_of},
     render::clipmap::WaterTerrainMaterial,
     screens::Screen,
 };
@@ -75,15 +76,22 @@ const PASS_HEIGHTS: i32 = 3;
 const PASS_SAMPLE: i32 = 4;
 const PASS_OBJECT: i32 = 5;
 const PASS_MARK_ACTIVE: i32 = 6;
+const PASS_SOURCE: i32 = 7;
 
 const MAX_DISPLACEMENTS: usize = (WORKGROUP_SIZE * WORKGROUP_SIZE) as usize;
+
+/// How many [`WaterSource`] and [`WaterSink`] entities, together, take part.
+pub const MAX_SOURCES: usize = 64;
 
 /// Cells from the window's border over which the flow fades to zero. The sim
 /// shader reads it as `constants::EDGE_FADE_CELLS`.
 pub const EDGE_FADE_CELLS: u32 = 100;
 
-/// Simulates the water drawn by the [`WaterMarker`] clipmap and its
-/// interaction with [`WaterDisplacement`] objects.
+/// Simulates the water drawn by the [`WaterMarker`] clipmap, the water
+/// [`WaterSource`] and [`WaterSink`] entities add and take, and its
+/// interaction with [`WaterDisplacement`] objects. Every step advances the
+/// chunk the window follows the camera with, and one other window chunk in
+/// turn, so water away from the camera moves more slowly.
 pub struct WaterSimPlugin;
 
 /// The water clipmap. Adding it starts the simulation on the textures of the
@@ -96,6 +104,7 @@ impl Plugin for WaterSimPlugin {
         embedded_asset!(app, "water.wesl");
         app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
         app.add_plugins(ExtractResourcePlugin::<DisplacementBufferMain>::default());
+        app.add_plugins(ExtractResourcePlugin::<SourceBufferMain>::default());
         app.add_plugins(ExtractResourcePlugin::<WaterSimSteps>::default());
         app.add_plugins(ExtractResourcePlugin::<ChunkLayout>::default());
         app.add_plugins(ExtractResourcePlugin::<StagingBuffers>::default());
@@ -106,11 +115,18 @@ impl Plugin for WaterSimPlugin {
         app.init_resource::<WaterSimSteps>();
         app.add_systems(Update, count_sim_steps);
         app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
+        app.insert_resource(SourceBufferMain { buffer: Vec::new() });
         app.init_resource::<WaterAtObjects>();
         app.add_systems(
             Update,
             collect_displacements
                 .after(park_objects)
+                .run_if(in_state(Screen::Gameplay)),
+        );
+        app.add_systems(
+            Update,
+            collect_sources
+                .run_if(resource_exists::<ChunkLayout>)
                 .run_if(in_state(Screen::Gameplay)),
         );
         app.add_systems(
@@ -132,6 +148,12 @@ impl Plugin for WaterSimPlugin {
             buffer: StorageBuffer::from(Displacements {
                 count: 0,
                 items: [Displacement::default(); MAX_DISPLACEMENTS],
+            }),
+        });
+        render_app.insert_resource(SourceBuffer {
+            buffer: StorageBuffer::from(Sources {
+                count: 0,
+                items: [Source::default(); MAX_SOURCES],
             }),
         });
         render_app.add_systems(
@@ -194,6 +216,24 @@ pub const DEFAULT_WIND_SPEED: f32 = 1.25;
 
 /// Pressure head of the default [`Wind`], in metres of water.
 pub const DEFAULT_WIND_HEAD: f32 = 0.01;
+
+/// A disc of `radius` metres around the entity's position that adds `rate`
+/// cubic metres of water per second, spread evenly over it, while its chunk
+/// is in the window. The radius should span a few cells.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct WaterSource {
+    pub radius: f32,
+    pub rate: f32,
+}
+
+/// A disc of `radius` metres around the entity's position that takes up to
+/// `rate` cubic metres of water per second, spread evenly over it, while its
+/// chunk is in the window. The radius should span a few cells.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct WaterSink {
+    pub radius: f32,
+    pub rate: f32,
+}
 
 /// A sphere of `radius` metres that displaces water, is lifted by it, and
 /// exchanges momentum with it. Only the first 64 such objects take part.
@@ -263,6 +303,32 @@ fn collect_displacements(
     }
 }
 
+fn collect_sources(
+    sources: Query<(&Transform, &WaterSource)>,
+    sinks: Query<(&Transform, &WaterSink)>,
+    layout: Res<ChunkLayout>,
+    mut buffer: ResMut<SourceBufferMain>,
+) {
+    buffer.buffer.clear();
+    let signed = sources
+        .iter()
+        .map(|(transform, s)| (transform, s.radius, s.rate))
+        .chain(
+            sinks
+                .iter()
+                .map(|(transform, s)| (transform, s.radius, -s.rate)),
+        );
+    let loaded = signed
+        .filter(|(transform, _, _)| layout.contains(chunk_of(transform.translation.xz())))
+        .take(MAX_SOURCES)
+        .map(|(transform, radius, rate)| Source {
+            center: transform.translation.xz(),
+            radius,
+            rate,
+        });
+    buffer.buffer.extend(loaded);
+}
+
 fn apply_water_forces(
     mut bodies: Query<(Entity, Forces, &Transform, &WaterDisplacement), Without<Parked>>,
     water: Res<WaterAtObjects>,
@@ -328,17 +394,18 @@ fn count_sim_steps(time: Res<Time>, mut steps: ResMut<WaterSimSteps>) {
 fn run_water_sim(
     mut render_context: RenderContext,
     mut step: Local<u32>,
+    mut next_outer: Local<usize>,
     pipeline: If<Res<WaterRenderPipeline>>,
     pipeline_cache: If<Res<PipelineCache>>,
     bind_group: If<Res<WaterBindGroup>>,
     steps: If<Res<WaterSimSteps>>,
     layout: If<Res<ChunkLayout>>,
     objects: If<Res<DisplacementBufferMain>>,
+    sources: If<Res<SourceBufferMain>>,
     wind: If<Res<Wind>>,
     mut wind_phase: Local<f32>,
 ) {
     let window_origin = layout.origin_uvec();
-    let centre = layout.centre_uvec();
     let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
         return;
     };
@@ -351,11 +418,11 @@ fn run_water_sim(
 
     let workgroups = CHUNK_DIM / WORKGROUP_SIZE;
     let wind_cycles_per_step = wind.speed / wind.wavelength * STEP_SECONDS;
-    let params = |id, object, step, wind_phase| SimParams {
+    let params = |id, object, chunk, step, wind_phase| SimParams {
         id,
         object,
         window_origin,
-        centre,
+        chunk,
         step,
         wind_phase,
         wind_direction: wind.direction,
@@ -364,33 +431,57 @@ fn run_water_sim(
         wind_speed: wind.speed,
         padding: 0,
     };
+    let outer: Vec<UVec2> = layout
+        .chunks()
+        .filter(|chunk| *chunk != layout.centre)
+        .map(|chunk| UVec2::new(chunk.x as u32, chunk.z as u32))
+        .collect();
     for _ in 0..steps.0.due {
-        *step = step.wrapping_add(1).max(1);
         *wind_phase = (*wind_phase + wind_cycles_per_step).rem_euclid(1.0);
-        for id in [PASS_MARK_ACTIVE, PASS_FLOWS] {
-            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step, *wind_phase)));
-            pass.dispatch_workgroups(workgroups, workgroups, 1);
-        }
-        for (index, object) in objects.buffer.iter().enumerate() {
-            if object.drag == 0.0 {
-                continue;
+        *next_outer = (*next_outer + 1) % outer.len();
+        for chunk in [layout.centre_uvec(), outer[*next_outer]] {
+            *step = step.wrapping_add(1).max(1);
+            let mut dispatch = |id, object, groups| {
+                pass.set_immediates(
+                    0,
+                    bytemuck::bytes_of(&params(id, object, chunk, *step, *wind_phase)),
+                );
+                pass.dispatch_workgroups(groups, groups, 1);
+            };
+            for id in [PASS_MARK_ACTIVE, PASS_FLOWS] {
+                dispatch(id, 0, workgroups);
             }
-            pass.set_immediates(
-                0,
-                bytemuck::bytes_of(&params(PASS_OBJECT, index as u32, *step, *wind_phase)),
-            );
-            let footprint = footprint_workgroups(object.radius);
-            pass.dispatch_workgroups(footprint, footprint, 1);
-        }
-        for id in [PASS_OUTFLOW_SCALE, PASS_LIMIT_FLOWS, PASS_HEIGHTS] {
-            pass.set_immediates(0, bytemuck::bytes_of(&params(id, 0, *step, *wind_phase)));
-            pass.dispatch_workgroups(workgroups, workgroups, 1);
+            for (index, object) in objects.buffer.iter().enumerate() {
+                if object.drag != 0.0 {
+                    dispatch(
+                        PASS_OBJECT,
+                        index as u32,
+                        footprint_workgroups(object.radius),
+                    );
+                }
+            }
+            for id in [PASS_OUTFLOW_SCALE, PASS_LIMIT_FLOWS, PASS_HEIGHTS] {
+                dispatch(id, 0, workgroups);
+            }
+            for (index, source) in sources.buffer.iter().enumerate() {
+                dispatch(
+                    PASS_SOURCE,
+                    index as u32,
+                    footprint_workgroups(source.radius),
+                );
+            }
         }
     }
 
     pass.set_immediates(
         0,
-        bytemuck::bytes_of(&params(PASS_SAMPLE, 0, *step, *wind_phase)),
+        bytemuck::bytes_of(&params(
+            PASS_SAMPLE,
+            0,
+            layout.centre_uvec(),
+            *step,
+            *wind_phase,
+        )),
     );
     pass.dispatch_workgroups(1, 1, 1);
 }
@@ -406,7 +497,7 @@ struct SimParams {
     id: i32,
     object: u32,
     window_origin: UVec2,
-    centre: UVec2,
+    chunk: UVec2,
     step: u32,
     wind_phase: f32,
     wind_direction: Vec2,
@@ -501,6 +592,7 @@ fn init_water_render(
                 ),
                 storage_buffer::<WaterSamples>(false),
                 storage_buffer_sized(false, None),
+                storage_buffer_read_only::<Sources>(false),
             ),
         ),
     );
@@ -513,6 +605,7 @@ fn init_water_render(
         shader_defs: vec![
             ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE),
             ShaderDefVal::UInt("MAX_DISPLACEMENTS".into(), MAX_DISPLACEMENTS as u32),
+            ShaderDefVal::UInt("MAX_SOURCES".into(), MAX_SOURCES as u32),
             ShaderDefVal::UInt("EDGE_FADE_CELLS".into(), EDGE_FADE_CELLS),
             ShaderDefVal::UInt("STEPS_PER_SECOND".into(), STEPS_PER_SECOND),
             ShaderDefVal::UInt("DRY_DEPTH_MM".into(), DRY_DEPTH_MM),
@@ -535,6 +628,8 @@ fn prepare_water_bindgroups(
     water_images: If<Res<WaterHeightTexture>>,
     mut displacement: If<ResMut<DisplacementBuffer>>,
     displacement_main: If<Res<DisplacementBufferMain>>,
+    mut sources: If<ResMut<SourceBuffer>>,
+    sources_main: If<Res<SourceBufferMain>>,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
     render_queue: Res<RenderQueue>,
@@ -545,6 +640,10 @@ fn prepare_water_bindgroups(
     displacement
         .buffer
         .write_buffer(&render_device, &render_queue);
+    let uploaded = sources.buffer.get_mut();
+    uploaded.count = sources_main.buffer.len() as u32;
+    uploaded.items[..sources_main.buffer.len()].copy_from_slice(&sources_main.buffer);
+    sources.buffer.write_buffer(&render_device, &render_queue);
 
     if bind_group.is_some() {
         return;
@@ -579,6 +678,7 @@ fn prepare_water_bindgroups(
             &cell_scratch.texture_view,
             samples.buffer.as_entire_buffer_binding(),
             active_groups.buffer.as_entire_buffer_binding(),
+            sources.buffer.binding().unwrap(),
         )),
     );
     commands.insert_resource(WaterBindGroup(bind_group));
@@ -586,7 +686,7 @@ fn prepare_water_bindgroups(
 
 /// The textures the simulation reads and writes, all window textures, the
 /// buffer the per-object samples are read back through and the one that marks
-/// which parts of the centre chunk are simulated. Present once the water
+/// which parts of the stepped chunk are simulated. Present once the water
 /// clipmap exists.
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
@@ -647,6 +747,30 @@ impl Default for WaterSamples {
 #[derive(Resource)]
 struct DisplacementBuffer {
     buffer: StorageBuffer<Displacements>,
+}
+
+#[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
+struct SourceBufferMain {
+    buffer: Vec<Source>,
+}
+
+#[derive(ShaderType, Clone, Copy, Default)]
+struct Source {
+    center: Vec2,
+    radius: f32,
+    rate: f32,
+}
+
+#[derive(ShaderType)]
+struct Sources {
+    count: u32,
+    items: [Source; MAX_SOURCES],
+}
+
+#[derive(Resource)]
+struct SourceBuffer {
+    buffer: StorageBuffer<Sources>,
 }
 
 /// Whether the window textures, the sim bind group and every staging buffer

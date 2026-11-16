@@ -1,10 +1,14 @@
-// The shallow-water simulation over the window's centre chunk and its
-// exchange with displacing objects, one pass per dispatch selected by
-// `SimParams.id`. Every texture holds the window's chunks at their world cells
-// modulo WINDOW_DIM; a cell's flow texel holds, as two f16, the flow across its
-// own -x and -z edges. The other window chunks keep the water they had and
-// exchange none with the centre. Within the centre chunk, a workgroup that is
-// dry, carries no flow and borders no such cell is skipped for the step.
+// The shallow-water simulation over the window's chunks, its exchange with
+// displacing objects and the water sources and sinks add or take, one pass per
+// dispatch selected by `SimParams.id`. Every texture holds the window's chunks
+// at their world cells modulo WINDOW_DIM; a cell's flow texel holds, as two
+// f16, the flow across its own -x and -z edges. A step advances one chunk,
+// `SimParams.chunk`: it updates the edges on its cells' -x and -z sides, the
+// seams with its lower neighbours included, and moves the water across those
+// seams on both sides. Its upper seams are left to the neighbours' steps, so
+// chunks stepped at different rates still exchange every seam exactly once.
+// Flow fades to zero towards the window's border. Within the stepped chunk, a
+// workgroup that is dry, carries no flow and borders no such cell is skipped.
 
 import package::grid;
 
@@ -50,11 +54,26 @@ struct WaterSamples {
 // after row of GROUPS workgroups.
 @group(0) @binding(6) var<storage, read_write> active_groups: array<atomic<u32>>;
 
+// A disc of `radius` metres that adds `rate` cubic metres of water per second,
+// or takes them while `rate` is negative.
+struct Source {
+    center: vec2f,
+    radius: f32,
+    rate: f32,
+}
+
+struct Sources {
+    count: u32,
+    items: array<Source, constants::MAX_SOURCES>,
+}
+
+@group(0) @binding(7) var<storage, read> sources: Sources;
+
 struct SimParams {
     id: i32,
     object: u32,
     window_origin: vec2u,
-    centre: vec2u,
+    chunk: vec2u,
     step: u32,
     wind_phase: f32,
     wind_direction: vec2f,
@@ -93,6 +112,8 @@ const OUTFLOW_MARGIN: f32 = 0.9999;
 
 const TAU: f32 = 6.2831855;
 
+const PI: f32 = 3.1415927;
+
 const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
 
 // Texel of the window cell `cell`, counted from the window's first cell.
@@ -109,9 +130,9 @@ fn in_window(cell: vec2i) -> bool {
     return all(cell >= vec2i(0)) && all(cell < vec2i(WINDOW));
 }
 
-// First window cell of the centre chunk.
+// First window cell of the stepped chunk.
 fn active_first() -> vec2i {
-    return vec2i(sim.centre - sim.window_origin) * CHUNK;
+    return vec2i(sim.chunk - sim.window_origin) * CHUNK;
 }
 
 fn in_active(cell: vec2i) -> bool {
@@ -152,33 +173,65 @@ fn set_flows(cell: vec2i, v: vec2f) {
     textureStore(flows, texel(cell), vec4u(pack2x16float(v), 0u, 0u, 0u));
 }
 
-// Flow across the -x edge of window cell `edge`, positive towards +x; zero on
-// the centre chunk's border and beyond it.
+// Flow across the -x edge of window cell `edge`, positive towards +x, if the
+// stepped chunk owns that edge; zero on its upper border, beyond it and on the
+// window's border.
 fn get_flow_x(edge: vec2i) -> f32 {
     let local = edge - active_first();
-    if local.x <= 0 || local.x >= CHUNK || local.y < 0 || local.y >= CHUNK {
+    if edge.x <= 0 || local.x < 0 || local.x >= CHUNK || local.y < 0 || local.y >= CHUNK {
         return 0.0;
     }
     return stored_flows(edge).x;
 }
 
-// Flow across the -z edge of window cell `edge`, positive towards +z; zero on
-// the centre chunk's border and beyond it.
+// Flow across the -z edge of window cell `edge`, positive towards +z, if the
+// stepped chunk owns that edge; zero on its upper border, beyond it and on the
+// window's border.
 fn get_flow_y(edge: vec2i) -> f32 {
     let local = edge - active_first();
-    if local.y <= 0 || local.y >= CHUNK || local.x < 0 || local.x >= CHUNK {
+    if edge.y <= 0 || local.y < 0 || local.y >= CHUNK || local.x < 0 || local.x >= CHUNK {
+        return 0.0;
+    }
+    return stored_flows(edge).y;
+}
+
+// Flow across the -x edge of window cell `edge` wherever it lies in the window.
+fn window_flow_x(edge: vec2i) -> f32 {
+    if edge.x <= 0 || !in_window(edge) {
+        return 0.0;
+    }
+    return stored_flows(edge).x;
+}
+
+// Flow across the -z edge of window cell `edge` wherever it lies in the window.
+fn window_flow_y(edge: vec2i) -> f32 {
+    if edge.y <= 0 || !in_window(edge) {
         return 0.0;
     }
     return stored_flows(edge).y;
 }
 
 // Factor a flow through window point `p` is scaled by: one further than
-// EDGE_FADE_CELLS from the centre chunk's border, falling linearly to zero on
-// it.
+// EDGE_FADE_CELLS from the window's border, falling linearly to zero on it.
 fn edge_fade(p: vec2f) -> f32 {
-    let local = p - vec2f(active_first());
-    let to_border = min(local, vec2f(f32(CHUNK)) - local);
+    let to_border = min(p, vec2f(f32(WINDOW)) - p);
     return clamp(min(to_border.x, to_border.y) / f32(constants::EDGE_FADE_CELLS), 0.0, 1.0);
+}
+
+// Whether window cell `cell` is on the stepped chunk's -x border inside the
+// window, so the cell before it belongs to the lower neighbour chunk.
+fn ring_x(cell: vec2i) -> bool {
+    return cell.x - active_first().x == 0 && cell.x > 0;
+}
+
+// Whether window cell `cell` is on the stepped chunk's -z border inside the
+// window, so the cell below it belongs to the lower neighbour chunk.
+fn ring_y(cell: vec2i) -> bool {
+    return cell.y - active_first().y == 0 && cell.y > 0;
+}
+
+fn is_wet(cell: vec2i) -> bool {
+    return textureLoad(water, texel(cell)).x > 0.0 || textureLoad(flows, texel(cell)).x != 0u;
 }
 
 fn face_depth(a: vec2f, b: vec2f) -> f32 {
@@ -224,14 +277,17 @@ fn neighbour_bit(offset: vec2i) -> u32 {
 }
 
 // Marks for this step every workgroup that holds a cell with water or flow,
-// and every workgroup bordering such a cell, so water can cross into it.
+// or borders such a cell, its own or the lower neighbours' across a seam, so
+// water can cross into it.
 fn mark_active_groups(invocation_id: vec3<u32>, local_id: vec3<u32>, group_id: vec3<u32>) {
     if all(local_id.xy == vec2u(0u)) {
         atomicStore(&wet_neighbourhood, 0u);
     }
     workgroupBarrier();
     let e = active_cell(invocation_id);
-    let wet = textureLoad(water, texel(e)).x > 0.0 || textureLoad(flows, texel(e)).x != 0u;
+    let wet = is_wet(e)
+        || (ring_x(e) && is_wet(e - vec2i(1, 0)))
+        || (ring_y(e) && is_wet(e - vec2i(0, 1)));
     if wet {
         let last = constants::WORKGROUP_SIZE - 1u;
         let low = vec2i(select(vec2u(0u), vec2u(1u), local_id.xy == vec2u(0u)));
@@ -263,19 +319,18 @@ fn update_flows(invocation_id: vec3<u32>) {
         return;
     }
     let e = active_cell(invocation_id);
-    let local = e - active_first();
     let here = get_height(e);
     let here_rate = depth_change(e);
     let here_wind = wind_head(e);
     var f = vec2f(0.0);
 
-    if local.x > 0 {
+    if e.x > 0 {
         let midpoint = vec2f(f32(e.x), f32(e.y) + 0.5);
         let minus_x = e - vec2i(1, 0);
         f.x = next_flow(get_flow_x(e), get_height(minus_x), here, depth_change(minus_x) - here_rate, wind_head(minus_x) - here_wind) * edge_fade(midpoint);
     }
 
-    if local.y > 0 {
+    if e.y > 0 {
         let midpoint = vec2f(f32(e.x) + 0.5, f32(e.y));
         let minus_z = e - vec2i(0, 1);
         f.y = next_flow(get_flow_y(e), get_height(minus_z), here, depth_change(minus_z) - here_rate, wind_head(minus_z) - here_wind) * edge_fade(midpoint);
@@ -322,19 +377,27 @@ fn apply_object(invocation_id: vec3<u32>) {
     if !in_active(e) {
         return;
     }
-    let local = e - active_first();
     var f = vec2f(get_flow_x(e), get_flow_y(e));
-    if local.x > 0 {
+    if e.x > 0 {
         f.x = flow_past_object(f.x, e - vec2i(1, 0), e, vec2f(1.0, 0.0), object);
     }
-    if local.y > 0 {
+    if e.y > 0 {
         f.y = flow_past_object(f.y, e - vec2i(0, 1), e, vec2f(0.0, 1.0), object);
     }
     set_flows(e, f);
 }
 
-// Fraction of its outflows a cell can afford: all of them while it holds more
-// water than they carry away, proportionally less otherwise.
+// Fraction of `outflow` window cell `cell` can afford: all of it while the
+// cell holds more water, proportionally less otherwise.
+fn affordable(cell: vec2i, outflow: f32) -> f32 {
+    let available = get_height(cell).y;
+    if outflow > available {
+        return available / outflow * OUTFLOW_MARGIN;
+    }
+    return 1.0;
+}
+
+// Fraction of its outflows a cell of the stepped chunk can afford.
 fn update_outflow_scale(invocation_id: vec3<u32>) {
     if !group_active(invocation_id) {
         return;
@@ -342,30 +405,31 @@ fn update_outflow_scale(invocation_id: vec3<u32>) {
     let l = active_cell(invocation_id);
     let outflow = max(0.0, get_flow_x(l + vec2i(1, 0))) + max(0.0, -get_flow_x(l))
         + max(0.0, get_flow_y(l + vec2i(0, 1))) + max(0.0, -get_flow_y(l));
-    let available = get_height(l).y;
-    var scale = 1.0;
-    if outflow > available {
-        scale = available / outflow * OUTFLOW_MARGIN;
-    }
-    textureStore(cell_scratch, texel(l), vec4f(scale, 0.0, 0.0, 0.0));
+    textureStore(cell_scratch, texel(l), vec4f(affordable(l, outflow), 0.0, 0.0, 0.0));
 }
 
 fn source_scale(f: f32, positive_source: vec2i, negative_source: vec2i) -> f32 {
     return textureLoad(cell_scratch, texel(select(negative_source, positive_source, f > 0.0))).x;
 }
 
-// Scales every interior edge's flow by the outflow scale of the cell it
-// drains, so no cell gives away more water than it holds.
+// Scales every edge's flow by the outflow scale of the cell it drains, so no
+// cell gives away more water than it holds. A lower neighbour's cell across a
+// seam gives only to that seam within the step, and keeps the depth change of
+// its own chunk's last step for the flows to read.
 fn limit_flows(invocation_id: vec3<u32>) {
     if !group_active(invocation_id) {
         return;
     }
     let e = active_cell(invocation_id);
     let f = vec2f(get_flow_x(e), get_flow_y(e));
-    set_flows(e, vec2f(
-        f.x * source_scale(f.x, e - vec2i(1, 0), e),
-        f.y * source_scale(f.y, e - vec2i(0, 1), e),
-    ));
+    var scale = vec2f(source_scale(f.x, e - vec2i(1, 0), e), source_scale(f.y, e - vec2i(0, 1), e));
+    if ring_x(e) && f.x > 0.0 {
+        scale.x = affordable(e - vec2i(1, 0), f.x);
+    }
+    if ring_y(e) && f.y > 0.0 {
+        scale.y = affordable(e - vec2i(0, 1), f.y);
+    }
+    set_flows(e, f * scale);
 }
 
 fn update_water_height(invocation_id: vec3<u32>) {
@@ -379,12 +443,38 @@ fn update_water_height(invocation_id: vec3<u32>) {
 
     set_height(l, max(0.0, get_height(l).y + net));
     textureStore(cell_scratch, texel(l), vec4f(net, 0.0, 0.0, 0.0));
+    if ring_x(l) {
+        let ring = l - vec2i(1, 0);
+        set_height(ring, max(0.0, get_height(ring).y - get_flow_x(l)));
+    }
+    if ring_y(l) {
+        let ring = l - vec2i(0, 1);
+        set_height(ring, max(0.0, get_height(ring).y - get_flow_y(l)));
+    }
+}
+
+// Adds or takes the water of source `sim.object` on the stepped chunk's cells
+// inside its disc.
+fn apply_source(invocation_id: vec3<u32>) {
+    let source = sources.items[sim.object];
+    let first = vec2i(floor(grid::world_cell(source.center - vec2f(source.radius))))
+        - grid::window_first_cell(sim.window_origin) - vec2i(1);
+    let e = first + vec2i(invocation_id.xy);
+    if !in_active(e) {
+        return;
+    }
+    let offset = world_of_window(vec2f(e)) - source.center;
+    if dot(offset, offset) > source.radius * source.radius {
+        return;
+    }
+    let change = source.rate * STEP_SECONDS / (PI * source.radius * source.radius);
+    set_height(e, max(0.0, get_height(e).y + change));
 }
 
 fn water_velocity(cell: vec2i, depth: f32) -> vec2f {
     let flow = vec2f(
-        get_flow_x(cell) + get_flow_x(cell + vec2i(1, 0)),
-        get_flow_y(cell) + get_flow_y(cell + vec2i(0, 1)),
+        window_flow_x(cell) + window_flow_x(cell + vec2i(1, 0)),
+        window_flow_y(cell) + window_flow_y(cell + vec2i(0, 1)),
     ) * 0.5;
     return flow * CELL_SPEED / max(depth, DRY_DEPTH);
 }
@@ -452,5 +542,7 @@ fn main(
         sample_water(invocation_id);
     } else if sim.id == 5 {
         apply_object(invocation_id);
+    } else if sim.id == 7 {
+        apply_source(invocation_id);
     }
 }

@@ -27,7 +27,7 @@ use crate::{
         WaterTerrainMaterial,
     },
     screens::Screen,
-    water_sim::{WaterDisplacement, WaterMarker},
+    water_sim::{WaterDisplacement, WaterMarker, WaterSink, WaterSource},
 };
 
 /// Spawns the gameplay scene on entering [`Screen::Gameplay`] and drives it
@@ -84,6 +84,10 @@ const CAMERA_SPAWN: Vec3 = Vec3::new(POND.x, POND.y + 100.0, POND.z + 1.0);
 const POND: Vec3 = Vec3::new(-49.0, 65.0, 18.0);
 
 const DROP_HEIGHT: f32 = 23.0;
+
+const SPRING: Vec3 = Vec3::new(POND.x + 20.0, POND.y, POND.z);
+
+const DRAIN: Vec3 = Vec3::new(POND.x + 12.0, POND.y, POND.z);
 
 const SPHERE_RADIUS: f32 = 0.6;
 
@@ -221,6 +225,22 @@ fn spawn_plane_dbg(
         POND + Vec3::new(-8.0, DROP_HEIGHT, 0.0),
         &mut meshes,
         standard_materials.add(Color::srgb_u8(24, 144, 255)),
+    ));
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(SPRING),
+        WaterSource {
+            radius: 1.5,
+            rate: 0.5,
+        },
+    ));
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(DRAIN),
+        WaterSink {
+            radius: 1.5,
+            rate: 1.0,
+        },
     ));
 }
 
