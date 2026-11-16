@@ -1,6 +1,6 @@
 //! The chunked world: every chunk kept in memory, the square window of chunks
-//! that is drawn and collides and whose centre chunk is simulated, and moving
-//! that window under the camera without touching the chunks that stay in it.
+//! that is drawn, collides and is simulated, and moving that window under the
+//! camera without touching the chunks that stay in it.
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
@@ -236,8 +236,9 @@ fn world_chunks() -> impl Iterator<Item = ChunkCoord> {
 /// Where the window lies: `origin` is its lower chunk. Every window chunk
 /// lives at the texels of its world cells modulo the window size, so the
 /// origin alone says where each one is. `centre` is the chunk the window
-/// follows the camera with, the only one whose water is simulated; it is the
-/// window's middle chunk except where the window meets the world's edge.
+/// follows the camera with, whose water is simulated every step while the
+/// other window chunks take turns; it is the window's middle chunk except
+/// where the window meets the world's edge.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct ChunkLayout {

@@ -102,6 +102,7 @@ wesl-deps:
 	        ("EDGE_FADE_CELLS", 100),
 	        ("WORKGROUP_SIZE", 8),
 	        ("MAX_DISPLACEMENTS", 64),
+	        ("MAX_SOURCES", 64),
 	        ("DRY_DEPTH_MM", 10),
 	        ("STEPS_PER_SECOND", 60),
 	        ("SORTED_FRAGMENT_MAX_COUNT", 128),
