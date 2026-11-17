@@ -1,14 +1,21 @@
 // The shallow-water simulation over the window's chunks, its exchange with
 // displacing objects and the water sources and sinks add or take, one pass per
-// dispatch selected by `SimParams.id`. Every texture holds the window's chunks
-// at their world cells modulo WINDOW_DIM; a cell's flow texel holds, as two
-// f16, the flow across its own -x and -z edges. A step advances one chunk,
-// `SimParams.chunk`: it updates the edges on its cells' -x and -z sides, the
-// seams with its lower neighbours included, and moves the water across those
-// seams on both sides. Its upper seams are left to the neighbours' steps, so
-// chunks stepped at different rates still exchange every seam exactly once.
-// Flow fades to zero towards the window's border. Within the stepped chunk, a
-// workgroup that is dry, carries no flow and borders no such cell is skipped.
+// dispatch selected by `SimParams.id`. It is compiled once per grid: with
+// `constants::COARSENING` 1 for the fine grid, which simulates the window's
+// centre chunk `SimParams.chunk`, and with COARSE_FACTOR for the coarse grid,
+// which simulates every other window cell, every step. Bindings 0, 1, 3 and 4
+// hold the compiled grid's textures and 8 to 11 the other grid's. Every
+// texture holds the window's chunks at their cells modulo the window's size; a
+// cell's flow texel holds, as two f16, the flow across its own -x and -z
+// edges.
+//
+// A coarse cell's ground and water are the averages of its fine cells. A fine
+// cell outside the centre chunk is virtual: its surface is its coarse cell's,
+// its depth that surface above its own ground. The fine grid owns every edge
+// of the centre chunk's border and moves the water across it to and from the
+// virtual cells; the coarse cell they lie in takes or gives it. Flow fades to
+// zero towards the window's border. Within the centre chunk, a workgroup that
+// is dry, carries no flow and borders no such cell is skipped.
 
 import package::grid;
 
@@ -32,7 +39,7 @@ struct Displacements {
 
 @group(0) @binding(2) var<storage, read> displacements: Displacements;
 
-@group(0) @binding(3) var base_height_texture: texture_storage_2d<r32float, read>;
+@group(0) @binding(3) var base_height_texture: texture_storage_2d<r32float, read_write>;
 
 @group(0) @binding(4) var cell_scratch: texture_storage_2d<r32float, read_write>;
 
@@ -69,6 +76,14 @@ struct Sources {
 
 @group(0) @binding(7) var<storage, read> sources: Sources;
 
+@group(0) @binding(8) var other_water: texture_storage_2d<r32float, read>;
+
+@group(0) @binding(9) var other_flows: texture_storage_2d<r32uint, read>;
+
+@group(0) @binding(10) var other_base: texture_storage_2d<r32float, read>;
+
+@group(0) @binding(11) var other_scratch: texture_storage_2d<r32float, read>;
+
 struct SimParams {
     id: i32,
     object: u32,
@@ -84,21 +99,37 @@ struct SimParams {
 };
 var<immediate> sim: SimParams;
 
-const WINDOW: i32 = i32(grid::WINDOW_DIM);
+const SCALE: i32 = i32(constants::COARSENING);
 
-const CHUNK: i32 = i32(grid::CHUNK_DIM);
+const FACTOR: i32 = i32(grid::COARSE_FACTOR);
+
+const FINE: bool = SCALE == 1;
+
+const OTHER_SCALE: i32 = FACTOR / SCALE;
+
+const SPAN: i32 = i32(constants::WINDOW_CHUNKS);
+
+const CHUNK: i32 = i32(grid::CHUNK_DIM) / SCALE;
+
+const OTHER_CHUNK: i32 = i32(grid::CHUNK_DIM) / OTHER_SCALE;
+
+const WINDOW: i32 = CHUNK * SPAN;
 
 const GROUPS: i32 = CHUNK / i32(constants::WORKGROUP_SIZE);
+
+const FINE_CELLS_PER_COARSE: f32 = f32(FACTOR * FACTOR);
 
 const GRAVITY: f32 = 9.81;
 
 const STEP_SECONDS: f32 = 1.0 / f32(constants::STEPS_PER_SECOND);
 
-const CELL_SPEED: f32 = f32(constants::STEPS_PER_SECOND) / grid::CELLS_PER_METER;
+const CELLS_PER_METER: f32 = grid::CELLS_PER_METER / f32(SCALE);
+
+const CELL_SPEED: f32 = f32(constants::STEPS_PER_SECOND) / CELLS_PER_METER;
 
 const FLOW_GAIN: f32 = GRAVITY / (CELL_SPEED * CELL_SPEED);
 
-const MAX_WAVE_SPEED: f32 = 0.5 * CELL_SPEED;
+const MAX_WAVE_SPEED: f32 = 0.5 * f32(constants::STEPS_PER_SECOND) / grid::CELLS_PER_METER;
 
 const MAX_WAVE_DEPTH: f32 = MAX_WAVE_SPEED * MAX_WAVE_SPEED / GRAVITY;
 
@@ -116,49 +147,123 @@ const PI: f32 = 3.1415927;
 
 const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
 
-// Texel of the window cell `cell`, counted from the window's first cell.
+const EDGE_FADE_CELLS: f32 = f32(constants::EDGE_FADE_CELLS) / f32(SCALE);
+
+// Texel of the window cell `cell` of a grid with `chunk` cells along each
+// chunk side, counted from the window's first cell.
+fn texel_on(cell: vec2i, chunk: i32) -> vec2u {
+    return grid::texel_on(vec2i(sim.window_origin) * chunk + cell, sim.window_origin, u32(chunk));
+}
+
 fn texel(cell: vec2i) -> vec2u {
-    return grid::window_texel(grid::window_first_cell(sim.window_origin) + cell, sim.window_origin);
+    return texel_on(cell, CHUNK);
+}
+
+fn other_texel(cell: vec2i) -> vec2u {
+    return texel_on(cell, OTHER_CHUNK);
+}
+
+// Texel of `local` in window slot `slot` of a grid with `chunk` cells along
+// each chunk side; `local` past the slot's upper side wraps into the next.
+fn slot_texel(slot: vec2u, local: vec2u, chunk: i32) -> vec2u {
+    return (slot * u32(chunk) + local) % u32(chunk * SPAN);
 }
 
 // World position of continuous window cell coordinates `cell`.
 fn world_of_window(cell: vec2f) -> vec2f {
-    return grid::world_of_cell(vec2f(grid::window_first_cell(sim.window_origin)) + cell);
+    return grid::world_of_cell(vec2f(grid::window_first_cell(sim.window_origin)) + cell * f32(SCALE));
+}
+
+// The window cell holding world position `world_xz`.
+fn cell_of_world(world_xz: vec2f) -> vec2i {
+    let fine = grid::world_cell(world_xz) - vec2f(grid::window_first_cell(sim.window_origin));
+    return vec2i(floor(fine / f32(SCALE)));
 }
 
 fn in_window(cell: vec2i) -> bool {
     return all(cell >= vec2i(0)) && all(cell < vec2i(WINDOW));
 }
 
-// First window cell of the stepped chunk.
-fn active_first() -> vec2i {
+// First window cell of the centre chunk.
+fn centre_first() -> vec2i {
     return vec2i(sim.chunk - sim.window_origin) * CHUNK;
 }
 
-fn in_active(cell: vec2i) -> bool {
-    let local = cell - active_first();
+fn in_centre(cell: vec2i) -> bool {
+    let local = cell - centre_first();
     return all(local >= vec2i(0)) && all(local < vec2i(CHUNK));
 }
 
+// Whether this grid simulates window cell `cell`: the centre chunk on the fine
+// grid, every other window cell on the coarse one.
+fn simulated(cell: vec2i) -> bool {
+    if FINE {
+        return in_centre(cell);
+    }
+    return in_window(cell) && !in_centre(cell);
+}
+
+// Whether this grid owns the edge between window cells `lower` and `upper`,
+// one step apart along +x or +z: the fine grid every edge of the centre chunk,
+// its border included, the coarse grid every other edge inside the window.
+fn owns_edge(lower: vec2i, upper: vec2i) -> bool {
+    if !in_window(lower) || !in_window(upper) {
+        return false;
+    }
+    if FINE {
+        return in_centre(lower) || in_centre(upper);
+    }
+    return !in_centre(lower) && !in_centre(upper);
+}
+
 // The window cell a cell pass's invocation works on.
-fn active_cell(invocation_id: vec3<u32>) -> vec2i {
-    return active_first() + vec2i(invocation_id.xy);
+fn stepped_cell(invocation_id: vec3<u32>) -> vec2i {
+    if FINE {
+        return centre_first() + vec2i(invocation_id.xy);
+    }
+    return vec2i(invocation_id.xy);
 }
 
 fn group_index(group: vec2i) -> u32 {
     return u32(group.y * GROUPS + group.x);
 }
 
-// Whether the workgroup of a cell pass's invocation was marked for this step.
+// Whether the workgroup of a cell pass's invocation was marked for this step;
+// always on the coarse grid.
 fn group_active(invocation_id: vec3<u32>) -> bool {
+    if !FINE {
+        return true;
+    }
     let group = vec2i(invocation_id.xy) / i32(constants::WORKGROUP_SIZE);
     return atomicLoad(&active_groups[group_index(group)]) == sim.step;
 }
 
-// Ground and water height of a window cell.
+// Depth of a fine cell with ground `ground` inside a coarse cell with
+// `coarse` ground and water: up to the coarse surface, none while the coarse
+// cell is dry.
+fn splat(coarse: vec2f, ground: f32) -> f32 {
+    if coarse.y <= DRY_DEPTH {
+        return 0.0;
+    }
+    return max(coarse.x + coarse.y - ground, 0.0);
+}
+
+// The coarse cell holding fine window cell `cell`.
+fn coarse_of(cell: vec2i) -> vec2i {
+    return vec2i(floor(vec2f(cell) / f32(FACTOR)));
+}
+
+// Ground and water height of a window cell of this grid; a fine cell outside
+// the centre chunk is virtual.
 fn get_height(cell: vec2i) -> vec2f {
     let t = texel(cell);
-    return vec2f(textureLoad(base_height_texture, t).x, textureLoad(water, t).x);
+    let ground = textureLoad(base_height_texture, t).x;
+    if FINE && !in_centre(cell) {
+        let c = other_texel(coarse_of(cell));
+        let coarse = vec2f(textureLoad(other_base, c).x, textureLoad(other_water, c).x);
+        return vec2f(ground, splat(coarse, ground));
+    }
+    return vec2f(ground, textureLoad(water, t).x);
 }
 
 fn set_height(cell: vec2i, v: f32) {
@@ -173,39 +278,19 @@ fn set_flows(cell: vec2i, v: vec2f) {
     textureStore(flows, texel(cell), vec4u(pack2x16float(v), 0u, 0u, 0u));
 }
 
-// Flow across the -x edge of window cell `edge`, positive towards +x, if the
-// stepped chunk owns that edge; zero on its upper border, beyond it and on the
-// window's border.
+// Flow across the -x edge of window cell `edge`, positive towards +x, if this
+// grid owns that edge; zero otherwise.
 fn get_flow_x(edge: vec2i) -> f32 {
-    let local = edge - active_first();
-    if edge.x <= 0 || local.x < 0 || local.x >= CHUNK || local.y < 0 || local.y >= CHUNK {
+    if !owns_edge(edge - vec2i(1, 0), edge) {
         return 0.0;
     }
     return stored_flows(edge).x;
 }
 
-// Flow across the -z edge of window cell `edge`, positive towards +z, if the
-// stepped chunk owns that edge; zero on its upper border, beyond it and on the
-// window's border.
+// Flow across the -z edge of window cell `edge`, positive towards +z, if this
+// grid owns that edge; zero otherwise.
 fn get_flow_y(edge: vec2i) -> f32 {
-    let local = edge - active_first();
-    if edge.y <= 0 || local.y < 0 || local.y >= CHUNK || local.x < 0 || local.x >= CHUNK {
-        return 0.0;
-    }
-    return stored_flows(edge).y;
-}
-
-// Flow across the -x edge of window cell `edge` wherever it lies in the window.
-fn window_flow_x(edge: vec2i) -> f32 {
-    if edge.x <= 0 || !in_window(edge) {
-        return 0.0;
-    }
-    return stored_flows(edge).x;
-}
-
-// Flow across the -z edge of window cell `edge` wherever it lies in the window.
-fn window_flow_y(edge: vec2i) -> f32 {
-    if edge.y <= 0 || !in_window(edge) {
+    if !owns_edge(edge - vec2i(0, 1), edge) {
         return 0.0;
     }
     return stored_flows(edge).y;
@@ -215,23 +300,57 @@ fn window_flow_y(edge: vec2i) -> f32 {
 // EDGE_FADE_CELLS from the window's border, falling linearly to zero on it.
 fn edge_fade(p: vec2f) -> f32 {
     let to_border = min(p, vec2f(f32(WINDOW)) - p);
-    return clamp(min(to_border.x, to_border.y) / f32(constants::EDGE_FADE_CELLS), 0.0, 1.0);
-}
-
-// Whether window cell `cell` is on the stepped chunk's -x border inside the
-// window, so the cell before it belongs to the lower neighbour chunk.
-fn ring_x(cell: vec2i) -> bool {
-    return cell.x - active_first().x == 0 && cell.x > 0;
-}
-
-// Whether window cell `cell` is on the stepped chunk's -z border inside the
-// window, so the cell below it belongs to the lower neighbour chunk.
-fn ring_y(cell: vec2i) -> bool {
-    return cell.y - active_first().y == 0 && cell.y > 0;
+    return clamp(min(to_border.x, to_border.y) / EDGE_FADE_CELLS, 0.0, 1.0);
 }
 
 fn is_wet(cell: vec2i) -> bool {
-    return textureLoad(water, texel(cell)).x > 0.0 || textureLoad(flows, texel(cell)).x != 0u;
+    return get_height(cell).y > 0.0 || textureLoad(flows, texel(cell)).x != 0u;
+}
+
+// The scratch value of a window cell, a virtual cell's that of its coarse
+// cell: its depth change in its last step until its outflow scale replaces it
+// within the step.
+fn scratch(cell: vec2i) -> f32 {
+    if FINE && !in_centre(cell) {
+        return textureLoad(other_scratch, other_texel(coarse_of(cell))).x;
+    }
+    return textureLoad(cell_scratch, texel(cell)).x;
+}
+
+// Water the fine grid moves across the centre chunk's border into coarse cell
+// `cell` this step, net, and the part of it leaving the cell, both in depth of
+// the coarse cell.
+fn border_exchange(cell: vec2i) -> vec2f {
+    var net = 0.0;
+    var outflow = 0.0;
+    let fine = cell * FACTOR;
+    for (var k = 0; k < FACTOR; k += 1) {
+        if in_centre(cell - vec2i(1, 0)) {
+            let f = fine_flows(fine + vec2i(0, k)).x;
+            net += f;
+            outflow += max(-f, 0.0);
+        }
+        if in_centre(cell + vec2i(1, 0)) {
+            let f = fine_flows(fine + vec2i(FACTOR, k)).x;
+            net -= f;
+            outflow += max(f, 0.0);
+        }
+        if in_centre(cell - vec2i(0, 1)) {
+            let f = fine_flows(fine + vec2i(k, 0)).y;
+            net += f;
+            outflow += max(-f, 0.0);
+        }
+        if in_centre(cell + vec2i(0, 1)) {
+            let f = fine_flows(fine + vec2i(k, FACTOR)).y;
+            net -= f;
+            outflow += max(f, 0.0);
+        }
+    }
+    return vec2f(net, outflow) / FINE_CELLS_PER_COARSE;
+}
+
+fn fine_flows(cell: vec2i) -> vec2f {
+    return unpack2x16float(textureLoad(other_flows, other_texel(cell)).x);
 }
 
 fn face_depth(a: vec2f, b: vec2f) -> f32 {
@@ -241,10 +360,6 @@ fn face_depth(a: vec2f, b: vec2f) -> f32 {
 fn critical_flow(flow: f32, depth: f32) -> f32 {
     let limit = depth * sqrt(GRAVITY * min(depth, MAX_WAVE_DEPTH)) / CELL_SPEED;
     return clamp(flow, -limit, limit);
-}
-
-fn depth_change(cell: vec2i) -> f32 {
-    return textureLoad(cell_scratch, texel(cell)).x;
 }
 
 fn wind_head(cell: vec2i) -> f32 {
@@ -269,6 +384,22 @@ fn next_flow(flow: f32, from_cell: vec2f, to_cell: vec2f, rate_difference: f32, 
     return critical_flow(driven / (1.0 + friction), depth);
 }
 
+// Next flow across the edge from window cell `lower` to `upper`, carrying
+// `flow` now, if this grid owns the edge; zero otherwise.
+fn edge_flow(lower: vec2i, upper: vec2i, flow: f32) -> f32 {
+    if !owns_edge(lower, upper) {
+        return 0.0;
+    }
+    let midpoint = (vec2f(lower) + vec2f(upper)) * 0.5 + vec2f(0.5);
+    return next_flow(
+        flow,
+        get_height(lower),
+        get_height(upper),
+        scratch(lower) - scratch(upper),
+        wind_head(lower) - wind_head(upper),
+    ) * edge_fade(midpoint);
+}
+
 var<workgroup> wet_neighbourhood: atomic<u32>;
 
 // Bit of the workgroup `offset` (each axis in -1..=1) away in a 3x3 mask.
@@ -276,19 +407,35 @@ fn neighbour_bit(offset: vec2i) -> u32 {
     return 1u << u32((offset.y + 1) * 3 + offset.x + 1);
 }
 
-// Marks for this step every workgroup that holds a cell with water or flow,
-// or borders such a cell, its own or the lower neighbours' across a seam, so
-// water can cross into it.
+// Whether centre chunk cell `cell` or a virtual cell across the border next
+// to it holds water or flow.
+fn wet_with_border(cell: vec2i) -> bool {
+    if is_wet(cell) {
+        return true;
+    }
+    let local = cell - centre_first();
+    var border = array(
+        local.x == 0, local.x == CHUNK - 1, local.y == 0, local.y == CHUNK - 1,
+    );
+    var offsets = array(vec2i(-1, 0), vec2i(1, 0), vec2i(0, -1), vec2i(0, 1));
+    for (var i = 0; i < 4; i += 1) {
+        let across = cell + offsets[i];
+        if border[i] && in_window(across) && is_wet(across) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Marks for this step every workgroup of the centre chunk that holds a cell
+// with water or flow, or borders such a cell, its own or a virtual one across
+// the border, so water can cross into it.
 fn mark_active_groups(invocation_id: vec3<u32>, local_id: vec3<u32>, group_id: vec3<u32>) {
     if all(local_id.xy == vec2u(0u)) {
         atomicStore(&wet_neighbourhood, 0u);
     }
     workgroupBarrier();
-    let e = active_cell(invocation_id);
-    let wet = is_wet(e)
-        || (ring_x(e) && is_wet(e - vec2i(1, 0)))
-        || (ring_y(e) && is_wet(e - vec2i(0, 1)));
-    if wet {
+    if wet_with_border(stepped_cell(invocation_id)) {
         let last = constants::WORKGROUP_SIZE - 1u;
         let low = vec2i(select(vec2u(0u), vec2u(1u), local_id.xy == vec2u(0u)));
         let high = vec2i(select(vec2u(0u), vec2u(1u), local_id.xy == vec2u(last)));
@@ -314,28 +461,34 @@ fn mark_active_groups(invocation_id: vec3<u32>, local_id: vec3<u32>, group_id: v
     }
 }
 
+// Whether `cell` lies on the centre chunk's upper border along `axis`, so the
+// fine grid's invocation for it also handles the edge past that border.
+fn on_upper_border(cell: vec2i, axis: i32) -> bool {
+    return FINE && (cell - centre_first())[axis] == CHUNK - 1;
+}
+
 fn update_flows(invocation_id: vec3<u32>) {
     if !group_active(invocation_id) {
         return;
     }
-    let e = active_cell(invocation_id);
-    let here = get_height(e);
-    let here_rate = depth_change(e);
-    let here_wind = wind_head(e);
-    var f = vec2f(0.0);
-
-    if e.x > 0 {
-        let midpoint = vec2f(f32(e.x), f32(e.y) + 0.5);
-        let minus_x = e - vec2i(1, 0);
-        f.x = next_flow(get_flow_x(e), get_height(minus_x), here, depth_change(minus_x) - here_rate, wind_head(minus_x) - here_wind) * edge_fade(midpoint);
+    let e = stepped_cell(invocation_id);
+    if !simulated(e) {
+        return;
     }
-
-    if e.y > 0 {
-        let midpoint = vec2f(f32(e.x) + 0.5, f32(e.y));
-        let minus_z = e - vec2i(0, 1);
-        f.y = next_flow(get_flow_y(e), get_height(minus_z), here, depth_change(minus_z) - here_rate, wind_head(minus_z) - here_wind) * edge_fade(midpoint);
+    let minus_x = e - vec2i(1, 0);
+    let minus_z = e - vec2i(0, 1);
+    set_flows(e, vec2f(
+        edge_flow(minus_x, e, get_flow_x(e)),
+        edge_flow(minus_z, e, get_flow_y(e)),
+    ));
+    let plus_x = e + vec2i(1, 0);
+    if on_upper_border(e, 0) && in_window(plus_x) {
+        set_flows(plus_x, vec2f(edge_flow(e, plus_x, get_flow_x(plus_x)), 0.0));
     }
-    set_flows(e, f);
+    let plus_z = e + vec2i(0, 1);
+    if on_upper_border(e, 1) && in_window(plus_z) {
+        set_flows(plus_z, vec2f(0.0, edge_flow(e, plus_z, get_flow_y(plus_z))));
+    }
 }
 
 fn immersed_thickness(cell: vec2i, column: vec2f, object: Displacement) -> f32 {
@@ -371,17 +524,18 @@ fn flow_past_object(flow: f32, upwind: vec2i, downwind: vec2i, axis: vec2f, obje
 
 fn apply_object(invocation_id: vec3<u32>) {
     let object = displacements.items[sim.object];
-    let first = vec2i(floor(grid::world_cell(object.center - vec2f(object.radius))))
-        - grid::window_first_cell(sim.window_origin) - vec2i(1);
+    let first = cell_of_world(object.center - vec2f(object.radius)) - vec2i(1);
     let e = first + vec2i(invocation_id.xy);
-    if !in_active(e) {
+    let own_x = owns_edge(e - vec2i(1, 0), e);
+    let own_y = owns_edge(e - vec2i(0, 1), e);
+    if !own_x && !own_y {
         return;
     }
     var f = vec2f(get_flow_x(e), get_flow_y(e));
-    if e.x > 0 {
+    if own_x {
         f.x = flow_past_object(f.x, e - vec2i(1, 0), e, vec2f(1.0, 0.0), object);
     }
-    if e.y > 0 {
+    if own_y {
         f.y = flow_past_object(f.y, e - vec2i(0, 1), e, vec2f(0.0, 1.0), object);
     }
     set_flows(e, f);
@@ -397,70 +551,81 @@ fn affordable(cell: vec2i, outflow: f32) -> f32 {
     return 1.0;
 }
 
-// Fraction of its outflows a cell of the stepped chunk can afford.
+// Fraction of its outflows a simulated cell can afford, the coarse cells'
+// outflows across the centre chunk's border included.
 fn update_outflow_scale(invocation_id: vec3<u32>) {
     if !group_active(invocation_id) {
         return;
     }
-    let l = active_cell(invocation_id);
-    let outflow = max(0.0, get_flow_x(l + vec2i(1, 0))) + max(0.0, -get_flow_x(l))
+    let l = stepped_cell(invocation_id);
+    if !simulated(l) {
+        return;
+    }
+    var outflow = max(0.0, get_flow_x(l + vec2i(1, 0))) + max(0.0, -get_flow_x(l))
         + max(0.0, get_flow_y(l + vec2i(0, 1))) + max(0.0, -get_flow_y(l));
+    if !FINE {
+        outflow += border_exchange(l).y;
+    }
     textureStore(cell_scratch, texel(l), vec4f(affordable(l, outflow), 0.0, 0.0, 0.0));
 }
 
-fn source_scale(f: f32, positive_source: vec2i, negative_source: vec2i) -> f32 {
-    return textureLoad(cell_scratch, texel(select(negative_source, positive_source, f > 0.0))).x;
+// `flow` across the edge from window cell `lower` to `upper`, scaled by the
+// outflow scale of the cell it drains.
+fn limited(flow: f32, lower: vec2i, upper: vec2i) -> f32 {
+    return flow * scratch(select(upper, lower, flow > 0.0));
 }
 
 // Scales every edge's flow by the outflow scale of the cell it drains, so no
-// cell gives away more water than it holds. A lower neighbour's cell across a
-// seam gives only to that seam within the step, and keeps the depth change of
-// its own chunk's last step for the flows to read.
+// cell gives away more water than it holds; across the centre chunk's border,
+// a virtual cell drains its coarse cell.
 fn limit_flows(invocation_id: vec3<u32>) {
     if !group_active(invocation_id) {
         return;
     }
-    let e = active_cell(invocation_id);
-    let f = vec2f(get_flow_x(e), get_flow_y(e));
-    var scale = vec2f(source_scale(f.x, e - vec2i(1, 0), e), source_scale(f.y, e - vec2i(0, 1), e));
-    if ring_x(e) && f.x > 0.0 {
-        scale.x = affordable(e - vec2i(1, 0), f.x);
+    let e = stepped_cell(invocation_id);
+    if !simulated(e) {
+        return;
     }
-    if ring_y(e) && f.y > 0.0 {
-        scale.y = affordable(e - vec2i(0, 1), f.y);
+    let minus_x = e - vec2i(1, 0);
+    let minus_z = e - vec2i(0, 1);
+    set_flows(e, vec2f(
+        limited(get_flow_x(e), minus_x, e),
+        limited(get_flow_y(e), minus_z, e),
+    ));
+    let plus_x = e + vec2i(1, 0);
+    if on_upper_border(e, 0) && in_window(plus_x) {
+        set_flows(plus_x, vec2f(limited(get_flow_x(plus_x), e, plus_x), 0.0));
     }
-    set_flows(e, f * scale);
+    let plus_z = e + vec2i(0, 1);
+    if on_upper_border(e, 1) && in_window(plus_z) {
+        set_flows(plus_z, vec2f(0.0, limited(get_flow_y(plus_z), e, plus_z)));
+    }
 }
 
 fn update_water_height(invocation_id: vec3<u32>) {
     if !group_active(invocation_id) {
         return;
     }
-    let l = active_cell(invocation_id);
-
-    let net = (get_flow_x(l) - get_flow_x(l + vec2i(1, 0)))
+    let l = stepped_cell(invocation_id);
+    if !simulated(l) {
+        return;
+    }
+    var net = (get_flow_x(l) - get_flow_x(l + vec2i(1, 0)))
         + (get_flow_y(l) - get_flow_y(l + vec2i(0, 1)));
-
+    if !FINE {
+        net += border_exchange(l).x;
+    }
     set_height(l, max(0.0, get_height(l).y + net));
     textureStore(cell_scratch, texel(l), vec4f(net, 0.0, 0.0, 0.0));
-    if ring_x(l) {
-        let ring = l - vec2i(1, 0);
-        set_height(ring, max(0.0, get_height(ring).y - get_flow_x(l)));
-    }
-    if ring_y(l) {
-        let ring = l - vec2i(0, 1);
-        set_height(ring, max(0.0, get_height(ring).y - get_flow_y(l)));
-    }
 }
 
-// Adds or takes the water of source `sim.object` on the stepped chunk's cells
-// inside its disc.
+// Adds or takes the water of source `sim.object` on this grid's simulated
+// cells inside its disc.
 fn apply_source(invocation_id: vec3<u32>) {
     let source = sources.items[sim.object];
-    let first = vec2i(floor(grid::world_cell(source.center - vec2f(source.radius))))
-        - grid::window_first_cell(sim.window_origin) - vec2i(1);
+    let first = cell_of_world(source.center - vec2f(source.radius)) - vec2i(1);
     let e = first + vec2i(invocation_id.xy);
-    if !in_active(e) {
+    if !simulated(e) {
         return;
     }
     let offset = world_of_window(vec2f(e)) - source.center;
@@ -473,12 +638,15 @@ fn apply_source(invocation_id: vec3<u32>) {
 
 fn water_velocity(cell: vec2i, depth: f32) -> vec2f {
     let flow = vec2f(
-        window_flow_x(cell) + window_flow_x(cell + vec2i(1, 0)),
-        window_flow_y(cell) + window_flow_y(cell + vec2i(0, 1)),
+        get_flow_x(cell) + get_flow_x(cell + vec2i(1, 0)),
+        get_flow_y(cell) + get_flow_y(cell + vec2i(0, 1)),
     ) * 0.5;
     return flow * CELL_SPEED / max(depth, DRY_DEPTH);
 }
 
+// Samples the water around every displacing object over this grid's
+// simulated cells; the coarse grid also writes an empty sample for an object
+// outside the window.
 fn sample_water(invocation_id: vec3<u32>) {
     let i = invocation_id.x + invocation_id.y * constants::WORKGROUP_SIZE;
     if i == 0 {
@@ -488,8 +656,10 @@ fn sample_water(invocation_id: vec3<u32>) {
         return;
     }
     let displacement = displacements.items[i];
-    let first = grid::window_first_cell(sim.window_origin);
-    let center = vec2i(floor(grid::world_cell(displacement.center))) - first;
+    let center = cell_of_world(displacement.center);
+    if !simulated(center) && (FINE || in_window(center)) {
+        return;
+    }
     var sample = WaterSample(displacement.entity, vec2f(0.0), 0.0, 0.0);
     if in_window(center) {
         let column = get_height(center);
@@ -497,15 +667,14 @@ fn sample_water(invocation_id: vec3<u32>) {
         sample.ground = column.x;
         sample.velocity = water_velocity(center, column.y);
 
-        let reach = displacement.radius + 2.0 / grid::CELLS_PER_METER;
+        let reach = displacement.radius + 2.0 / CELLS_PER_METER;
         var directions = array(vec2f(1.0, 0.0), vec2f(-1.0, 0.0), vec2f(0.0, 1.0), vec2f(0.0, -1.0));
         var wet = 0.0;
         var surface = 0.0;
         var velocity = vec2f(0.0);
         for (var d = 0; d < 4; d += 1) {
-            let rim_point = displacement.center + directions[d] * reach;
-            let rim = vec2i(floor(grid::world_cell(rim_point))) - first;
-            if in_window(rim) {
+            let rim = cell_of_world(displacement.center + directions[d] * reach);
+            if in_window(rim) && (FINE || !in_centre(rim)) {
                 let rim_column = get_height(rim);
                 if rim_column.y > DRY_DEPTH {
                     wet += 1.0;
@@ -520,6 +689,47 @@ fn sample_water(invocation_id: vec3<u32>) {
         }
     }
     samples.items[i] = sample;
+}
+
+// Coarse grid only: sets every coarse cell of window slot `sim.chunk` to the
+// average ground and water of its fine cells, with no flow and no depth
+// change.
+fn restrict_slot(invocation_id: vec3<u32>) {
+    let local = invocation_id.xy;
+    var ground = 0.0;
+    var depth = 0.0;
+    for (var y = 0u; y < u32(FACTOR); y += 1u) {
+        for (var x = 0u; x < u32(FACTOR); x += 1u) {
+            let fine = slot_texel(sim.chunk, local * u32(FACTOR) + vec2u(x, y), OTHER_CHUNK);
+            ground += textureLoad(other_base, fine).x;
+            depth += textureLoad(other_water, fine).x;
+        }
+    }
+    let t = slot_texel(sim.chunk, local, CHUNK);
+    textureStore(base_height_texture, t, vec4f(ground / FINE_CELLS_PER_COARSE, 0.0, 0.0, 0.0));
+    textureStore(water, t, vec4f(depth / FINE_CELLS_PER_COARSE, 0.0, 0.0, 0.0));
+    textureStore(flows, t, vec4u(0u));
+    textureStore(cell_scratch, t, vec4f(0.0));
+}
+
+// Fine grid only: sets every fine cell of window slot `sim.chunk` to the
+// depth its coarse cell splats onto it, with no flow and no depth change, and
+// clears the flows of the cells just past the slot's upper sides.
+fn prolong_slot(invocation_id: vec3<u32>) {
+    let local = invocation_id.xy;
+    if any(local > vec2u(u32(CHUNK))) || all(local == vec2u(u32(CHUNK))) {
+        return;
+    }
+    let t = slot_texel(sim.chunk, local, CHUNK);
+    textureStore(flows, t, vec4u(0u));
+    if any(local == vec2u(u32(CHUNK))) {
+        return;
+    }
+    let c = slot_texel(sim.chunk, local / u32(FACTOR), OTHER_CHUNK);
+    let coarse = vec2f(textureLoad(other_base, c).x, textureLoad(other_water, c).x);
+    let ground = textureLoad(base_height_texture, t).x;
+    textureStore(water, t, vec4f(splat(coarse, ground), 0.0, 0.0, 0.0));
+    textureStore(cell_scratch, t, vec4f(0.0));
 }
 
 @compute @workgroup_size(constants::WORKGROUP_SIZE, constants::WORKGROUP_SIZE, 1)
@@ -544,5 +754,9 @@ fn main(
         apply_object(invocation_id);
     } else if sim.id == 7 {
         apply_source(invocation_id);
+    } else if sim.id == 8 {
+        restrict_slot(invocation_id);
+    } else if sim.id == 9 {
+        prolong_slot(invocation_id);
     }
 }
