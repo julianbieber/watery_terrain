@@ -249,7 +249,10 @@ impl TerrainHeightMapMesh {
 
 /// Displaces a clipmap onto the water surface. `water` is the depth texture
 /// the simulation updates in place and `base` the terrain heights, both window
-/// textures; `window_origin` is the window's lower chunk.
+/// textures; `window_origin` is the window's lower chunk. Inside the window
+/// chunk `centre` the water is drawn from `water`; elsewhere from
+/// `coarse_water` and `coarse_base`, the coarse window textures: a wet coarse
+/// cell's water is drawn at its surface wherever the ground lies below it.
 #[derive(Asset, AsBindGroup, Debug, Clone, Reflect)]
 pub struct WaterTerrainMaterial {
     #[texture(100, visibility(vertex, fragment))]
@@ -262,6 +265,14 @@ pub struct WaterTerrainMaterial {
     pub window_origin: UVec2,
     #[uniform(105, visibility(vertex, fragment))]
     pub shape: ClipmapShape,
+    #[texture(106, visibility(vertex, fragment))]
+    #[sampler(107, visibility(vertex, fragment))]
+    pub coarse_water: Handle<Image>,
+    #[texture(108, visibility(vertex, fragment))]
+    #[sampler(109, visibility(vertex, fragment))]
+    pub coarse_base: Handle<Image>,
+    #[uniform(110, visibility(vertex, fragment))]
+    pub centre: UVec2,
 }
 
 impl MaterialExtension for WaterTerrainMaterial {

@@ -27,7 +27,7 @@ use crate::{
         WaterTerrainMaterial,
     },
     screens::Screen,
-    water_sim::{WaterDisplacement, WaterMarker, WaterSink, WaterSource},
+    water_sim::{WaterDisplacement, WaterMarker, WaterSink, WaterSource, coarse_window_texture},
 };
 
 /// Spawns the gameplay scene on entering [`Screen::Gameplay`] and drives it
@@ -177,6 +177,9 @@ fn spawn_plane_dbg(
                 base: rock_heightmap_texture.clone(),
                 window_origin: layout.origin_uvec(),
                 shape: clipmap.shader_shape(),
+                coarse_water: images.add(coarse_window_texture()),
+                coarse_base: images.add(coarse_window_texture()),
+                centre: layout.centre_uvec(),
             },
         })),
     ));

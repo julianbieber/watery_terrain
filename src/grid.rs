@@ -27,6 +27,12 @@ pub const WINDOW_DIM: u32 = WINDOW_CHUNKS * CHUNK_DIM;
 /// `constants::CELLS_PER_METER` through `package::grid`.
 pub const CELLS_PER_METER: u32 = 10;
 
+/// Fine cells along each side of one coarse cell. The window chunks other
+/// than the one the window follows the camera with are simulated on the coarse
+/// grid. The shaders read it as `constants::COARSE_FACTOR` through
+/// `package::grid`.
+pub const COARSE_FACTOR: u32 = 4;
+
 /// Side length of one cell in metres.
 pub const CELL_SIZE: f32 = 1.0 / CELLS_PER_METER as f32;
 
@@ -88,6 +94,7 @@ impl Plugin for GridPlugin {
                 ShaderDefVal::UInt("CHUNK_DIM".into(), CHUNK_DIM),
                 ShaderDefVal::UInt("WORLD_CHUNKS".into(), WORLD_CHUNKS),
                 ShaderDefVal::UInt("WINDOW_CHUNKS".into(), WINDOW_CHUNKS),
+                ShaderDefVal::UInt("COARSE_FACTOR".into(), COARSE_FACTOR),
             ];
         });
     }

@@ -236,9 +236,9 @@ fn world_chunks() -> impl Iterator<Item = ChunkCoord> {
 /// Where the window lies: `origin` is its lower chunk. Every window chunk
 /// lives at the texels of its world cells modulo the window size, so the
 /// origin alone says where each one is. `centre` is the chunk the window
-/// follows the camera with, whose water is simulated every step while the
-/// other window chunks take turns; it is the window's middle chunk except
-/// where the window meets the world's edge.
+/// follows the camera with, whose water is simulated on the fine grid while
+/// the other window chunks are on the coarse one; it is the window's middle
+/// chunk except where the window meets the world's edge.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct ChunkLayout {
@@ -446,6 +446,7 @@ fn shift_window(
     for surface in &water_surfaces {
         if let Some(mut material) = water_materials.get_mut(surface.id()) {
             material.extension.window_origin = origin;
+            material.extension.centre = next.centre_uvec();
         }
     }
     for surface in &terrain_surfaces {

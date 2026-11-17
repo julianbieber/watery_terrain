@@ -18,10 +18,10 @@ use bevy::{
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
             BufferDescriptor, BufferInitDescriptor, BufferUsages, CachedComputePipelineId,
-            ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, Origin3d, PipelineCache,
-            ShaderStages, ShaderType, StorageBuffer, TexelCopyBufferInfo, TexelCopyBufferLayout,
-            TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat,
-            TextureUsages,
+            ComputePass, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
+            Extent3d, Origin3d, PipelineCache, ShaderStages, ShaderType, StorageBuffer,
+            StorageTextureAccess, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
+            Texture, TextureAspect, TextureDimension, TextureFormat, TextureUsages, TextureView,
             binding_types::{
                 storage_buffer, storage_buffer_read_only, storage_buffer_sized, texture_storage_2d,
             },
@@ -43,7 +43,9 @@ use std::{
 
 use crate::{
     chunks::{ChunkLayout, ChunkSwap, Parked, StagingBuffers, SwapQueue, park_objects},
-    grid::{CELLS_PER_METER, CHUNK_DIM, WINDOW_CHUNKS, WINDOW_DIM, chunk_of},
+    grid::{
+        CELLS_PER_METER, CHUNK_DIM, COARSE_FACTOR, ChunkCoord, WINDOW_CHUNKS, WINDOW_DIM, chunk_of,
+    },
     render::clipmap::WaterTerrainMaterial,
     screens::Screen,
 };
@@ -77,6 +79,8 @@ const PASS_SAMPLE: i32 = 4;
 const PASS_OBJECT: i32 = 5;
 const PASS_MARK_ACTIVE: i32 = 6;
 const PASS_SOURCE: i32 = 7;
+const PASS_RESTRICT: i32 = 8;
+const PASS_PROLONG: i32 = 9;
 
 const MAX_DISPLACEMENTS: usize = (WORKGROUP_SIZE * WORKGROUP_SIZE) as usize;
 
@@ -90,8 +94,12 @@ pub const EDGE_FADE_CELLS: u32 = 100;
 /// Simulates the water drawn by the [`WaterMarker`] clipmap, the water
 /// [`WaterSource`] and [`WaterSink`] entities add and take, and its
 /// interaction with [`WaterDisplacement`] objects. Every step advances the
-/// chunk the window follows the camera with, and one other window chunk in
-/// turn, so water away from the camera moves more slowly.
+/// whole window: the chunk the window follows the camera with on the fine
+/// grid, every other window chunk on a grid [`COARSE_FACTOR`] times coarser,
+/// where water, ground, objects, sources and sinks all act on cells of that
+/// size. When the followed chunk changes, the new one takes its coarse
+/// water's surface onto its fine cells and the old one is averaged onto the
+/// coarse grid.
 pub struct WaterSimPlugin;
 
 /// The water clipmap. Adding it starts the simulation on the textures of the
@@ -137,6 +145,7 @@ impl Plugin for WaterSimPlugin {
         render_app.add_systems(RenderStartup, init_water_render);
         render_app.insert_resource(ready);
         render_app.init_resource::<ExtractedSwaps>();
+        render_app.init_resource::<CoarseSync>();
         render_app.add_systems(ExtractSchedule, extract_swaps);
         render_app.add_systems(
             Render,
@@ -371,11 +380,15 @@ fn store_water_samples(readback: On<ReadbackComplete>, mut water: ResMut<WaterAt
 #[derive(Resource)]
 struct WaterRenderPipeline {
     layout: BindGroupLayoutDescriptor,
-    pipeline: CachedComputePipelineId,
+    fine: CachedComputePipelineId,
+    coarse: CachedComputePipelineId,
 }
 
 #[derive(Resource)]
-struct WaterBindGroup(BindGroup);
+struct WaterBindGroups {
+    fine: BindGroup,
+    coarse: BindGroup,
+}
 
 #[derive(Resource, Clone, Default, ExtractResource)]
 #[extract_app(RenderApp)]
@@ -394,35 +407,32 @@ fn count_sim_steps(time: Res<Time>, mut steps: ResMut<WaterSimSteps>) {
 fn run_water_sim(
     mut render_context: RenderContext,
     mut step: Local<u32>,
-    mut next_outer: Local<usize>,
     pipeline: If<Res<WaterRenderPipeline>>,
     pipeline_cache: If<Res<PipelineCache>>,
-    bind_group: If<Res<WaterBindGroup>>,
+    bind_groups: If<Res<WaterBindGroups>>,
     steps: If<Res<WaterSimSteps>>,
     layout: If<Res<ChunkLayout>>,
     objects: If<Res<DisplacementBufferMain>>,
     sources: If<Res<SourceBufferMain>>,
     wind: If<Res<Wind>>,
+    mut sync: ResMut<CoarseSync>,
     mut wind_phase: Local<f32>,
 ) {
-    let window_origin = layout.origin_uvec();
-    let Some(update_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
+    let Some((fine, coarse)) = grids(&pipeline, &pipeline_cache, &bind_groups) else {
         return;
     };
     let mut pass = render_context
         .command_encoder()
         .begin_compute_pass(&ComputePassDescriptor::default());
 
-    pass.set_bind_group(0, &bind_group.0.0, &[]);
-    pass.set_pipeline(update_pipeline);
+    sync_centre(&mut pass, &fine, &coarse, &layout, &mut sync);
 
-    let workgroups = CHUNK_DIM / WORKGROUP_SIZE;
     let wind_cycles_per_step = wind.speed / wind.wavelength * STEP_SECONDS;
-    let params = |id, object, chunk, step, wind_phase| SimParams {
+    let params = |id, object, step, wind_phase| SimParams {
         id,
         object,
-        window_origin,
-        chunk,
+        window_origin: layout.origin_uvec(),
+        chunk: layout.centre_uvec(),
         step,
         wind_phase,
         wind_direction: wind.direction,
@@ -431,64 +441,134 @@ fn run_water_sim(
         wind_speed: wind.speed,
         padding: 0,
     };
-    let outer: Vec<UVec2> = layout
-        .chunks()
-        .filter(|chunk| *chunk != layout.centre)
-        .map(|chunk| UVec2::new(chunk.x as u32, chunk.z as u32))
-        .collect();
+    let footprint = |grid: &Grid, radius: f32| {
+        let cells_per_metre = CELLS_PER_METER as f32 / grid.coarsening as f32;
+        let cells = (2.0 * radius * cells_per_metre).ceil() as u32 + 3;
+        cells.div_ceil(WORKGROUP_SIZE)
+    };
     for _ in 0..steps.0.due {
         *wind_phase = (*wind_phase + wind_cycles_per_step).rem_euclid(1.0);
-        *next_outer = (*next_outer + 1) % outer.len();
-        for chunk in [layout.centre_uvec(), outer[*next_outer]] {
-            *step = step.wrapping_add(1).max(1);
-            let mut dispatch = |id, object, groups| {
-                pass.set_immediates(
-                    0,
-                    bytemuck::bytes_of(&params(id, object, chunk, *step, *wind_phase)),
-                );
-                pass.dispatch_workgroups(groups, groups, 1);
-            };
-            for id in [PASS_MARK_ACTIVE, PASS_FLOWS] {
-                dispatch(id, 0, workgroups);
-            }
+        *step = step.wrapping_add(1).max(1);
+        let at = |id, object| params(id, object, *step, *wind_phase);
+        let cells = |pass: &mut ComputePass, grid: &Grid, id| {
+            grid.dispatch(
+                pass,
+                &at(id, 0),
+                CHUNK_DIM / grid.coarsening / WORKGROUP_SIZE * grid.chunks,
+            );
+        };
+        cells(&mut pass, &fine, PASS_MARK_ACTIVE);
+        cells(&mut pass, &fine, PASS_FLOWS);
+        cells(&mut pass, &coarse, PASS_FLOWS);
+        for grid in [&fine, &coarse] {
             for (index, object) in objects.buffer.iter().enumerate() {
                 if object.drag != 0.0 {
-                    dispatch(
-                        PASS_OBJECT,
-                        index as u32,
-                        footprint_workgroups(object.radius),
-                    );
+                    let groups = footprint(grid, object.radius);
+                    grid.dispatch(&mut pass, &at(PASS_OBJECT, index as u32), groups);
                 }
             }
-            for id in [PASS_OUTFLOW_SCALE, PASS_LIMIT_FLOWS, PASS_HEIGHTS] {
-                dispatch(id, 0, workgroups);
-            }
+        }
+        cells(&mut pass, &coarse, PASS_OUTFLOW_SCALE);
+        cells(&mut pass, &fine, PASS_OUTFLOW_SCALE);
+        cells(&mut pass, &fine, PASS_LIMIT_FLOWS);
+        cells(&mut pass, &coarse, PASS_LIMIT_FLOWS);
+        cells(&mut pass, &fine, PASS_HEIGHTS);
+        cells(&mut pass, &coarse, PASS_HEIGHTS);
+        for grid in [&fine, &coarse] {
             for (index, source) in sources.buffer.iter().enumerate() {
-                dispatch(
-                    PASS_SOURCE,
-                    index as u32,
-                    footprint_workgroups(source.radius),
-                );
+                let groups = footprint(grid, source.radius);
+                grid.dispatch(&mut pass, &at(PASS_SOURCE, index as u32), groups);
             }
         }
     }
 
-    pass.set_immediates(
-        0,
-        bytemuck::bytes_of(&params(
-            PASS_SAMPLE,
-            0,
-            layout.centre_uvec(),
-            *step,
-            *wind_phase,
-        )),
-    );
-    pass.dispatch_workgroups(1, 1, 1);
+    for grid in [&fine, &coarse] {
+        grid.dispatch(&mut pass, &params(PASS_SAMPLE, 0, *step, *wind_phase), 1);
+    }
 }
 
-fn footprint_workgroups(radius: f32) -> u32 {
-    let cells = (2.0 * radius * CELLS_PER_METER as f32).ceil() as u32 + 3;
-    cells.div_ceil(WORKGROUP_SIZE)
+struct Grid<'a> {
+    pipeline: &'a ComputePipeline,
+    bind_group: &'a BindGroup,
+    coarsening: u32,
+    chunks: u32,
+}
+
+impl Grid<'_> {
+    fn dispatch(&self, pass: &mut ComputePass, params: &SimParams, groups: u32) {
+        pass.set_pipeline(self.pipeline);
+        pass.set_bind_group(0, self.bind_group, &[]);
+        pass.set_immediates(0, bytemuck::bytes_of(params));
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+
+    fn slot_pass(&self, pass: &mut ComputePass, id: i32, chunk: ChunkCoord) {
+        let span = WINDOW_CHUNKS as i32;
+        let params = SimParams {
+            id,
+            chunk: UVec2::new(
+                chunk.x.rem_euclid(span) as u32,
+                chunk.z.rem_euclid(span) as u32,
+            ),
+            ..Zeroable::zeroed()
+        };
+        let cells = CHUNK_DIM / self.coarsening + u32::from(id == PASS_PROLONG);
+        self.dispatch(pass, &params, cells.div_ceil(WORKGROUP_SIZE));
+    }
+}
+
+fn grids<'a>(
+    pipeline: &WaterRenderPipeline,
+    pipeline_cache: &'a PipelineCache,
+    bind_groups: &'a WaterBindGroups,
+) -> Option<(Grid<'a>, Grid<'a>)> {
+    Some((
+        Grid {
+            pipeline: pipeline_cache.get_compute_pipeline(pipeline.fine)?,
+            bind_group: &bind_groups.fine,
+            coarsening: 1,
+            chunks: 1,
+        },
+        Grid {
+            pipeline: pipeline_cache.get_compute_pipeline(pipeline.coarse)?,
+            bind_group: &bind_groups.coarse,
+            coarsening: COARSE_FACTOR,
+            chunks: WINDOW_CHUNKS,
+        },
+    ))
+}
+
+#[derive(Resource, Default)]
+struct CoarseSync {
+    centre: Option<ChunkCoord>,
+    entered: Vec<ChunkCoord>,
+}
+
+fn sync_centre(
+    pass: &mut ComputePass,
+    fine: &Grid,
+    coarse: &Grid,
+    layout: &ChunkLayout,
+    sync: &mut CoarseSync,
+) {
+    match sync.centre {
+        Some(centre) if centre == layout.centre => {}
+        None => {
+            for chunk in layout.chunks() {
+                coarse.slot_pass(pass, PASS_RESTRICT, chunk);
+            }
+        }
+        Some(old) => {
+            if layout.contains(old) {
+                coarse.slot_pass(pass, PASS_RESTRICT, old);
+            }
+            if !sync.entered.contains(&layout.centre) {
+                fine.slot_pass(pass, PASS_PROLONG, layout.centre);
+            }
+        }
+    }
+    sync.centre = Some(layout.centre);
+    sync.entered.clear();
 }
 
 #[repr(C)]
@@ -518,8 +598,10 @@ fn init_internal_textures(
     info!("adding internal water tex");
     let material = material.get(trigger.entity).unwrap();
     let material = water_terrain_materials.get(material.0.id()).unwrap();
-    let flows = images.add(zeroed_storage_texture(TextureFormat::R32Uint));
-    let cell_scratch = images.add(zeroed_storage_texture(TextureFormat::R32Float));
+    let flows = images.add(zeroed_storage_texture(TextureFormat::R32Uint, WINDOW_DIM));
+    let cell_scratch = images.add(zeroed_storage_texture(TextureFormat::R32Float, WINDOW_DIM));
+    let coarse_flows = images.add(zeroed_storage_texture(TextureFormat::R32Uint, COARSE_DIM));
+    let coarse_scratch = images.add(zeroed_storage_texture(TextureFormat::R32Float, COARSE_DIM));
     let active_groups = buffers.add(ShaderBuffer::with_size(
         ACTIVE_GROUPS_BYTES,
         RenderAssetUsages::RENDER_WORLD,
@@ -540,18 +622,33 @@ fn init_internal_textures(
         flows,
         base_height: material.extension.base.clone(),
         cell_scratch,
+        coarse_water: material.extension.coarse_water.clone(),
+        coarse_flows,
+        coarse_base_height: material.extension.coarse_base.clone(),
+        coarse_scratch,
         samples,
         active_groups,
     });
 }
 
+const COARSE_DIM: u32 = WINDOW_DIM / COARSE_FACTOR;
+
+/// A zeroed coarse window texture of the format the sim keeps its coarse
+/// water and ground in, for [`WaterTerrainMaterial`]'s `coarse_water` and
+/// `coarse_base`; the sim fills both from the fine textures once it starts.
+pub fn coarse_window_texture() -> Image {
+    let mut image = zeroed_storage_texture(TextureFormat::R32Float, COARSE_DIM);
+    image.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
+    image
+}
+
 const ACTIVE_GROUPS_BYTES: u64 = ((CHUNK_DIM / WORKGROUP_SIZE) as u64).pow(2) * 4;
 
-fn zeroed_storage_texture(format: TextureFormat) -> Image {
+fn zeroed_storage_texture(format: TextureFormat, dim: u32) -> Image {
     let mut image = Image::new_fill(
         Extent3d {
-            width: WINDOW_DIM,
-            height: WINDOW_DIM,
+            width: dim,
+            height: dim,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
@@ -573,55 +670,53 @@ fn init_water_render(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(
-                    TextureFormat::R32Float,
-                    bevy::render::render_resource::StorageTextureAccess::ReadWrite,
-                ),
-                texture_storage_2d(
-                    TextureFormat::R32Uint,
-                    bevy::render::render_resource::StorageTextureAccess::ReadWrite,
-                ),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadWrite),
+                texture_storage_2d(TextureFormat::R32Uint, StorageTextureAccess::ReadWrite),
                 storage_buffer_read_only::<Displacements>(false),
-                texture_storage_2d(
-                    TextureFormat::R32Float,
-                    bevy::render::render_resource::StorageTextureAccess::ReadOnly,
-                ),
-                texture_storage_2d(
-                    TextureFormat::R32Float,
-                    bevy::render::render_resource::StorageTextureAccess::ReadWrite,
-                ),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadWrite),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadWrite),
                 storage_buffer::<WaterSamples>(false),
                 storage_buffer_sized(false, None),
                 storage_buffer_read_only::<Sources>(false),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Uint, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
             ),
         ),
     );
     let shader: Handle<Shader> = asset_server
         .load(AssetPath::from_path_buf(embedded_path!("water.wesl")).with_source("embedded"));
-    let update_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        layout: vec![texture_bind_group_layout.clone()],
-        shader,
-        entry_point: Some(Cow::from("main")),
-        shader_defs: vec![
-            ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE),
-            ShaderDefVal::UInt("MAX_DISPLACEMENTS".into(), MAX_DISPLACEMENTS as u32),
-            ShaderDefVal::UInt("MAX_SOURCES".into(), MAX_SOURCES as u32),
-            ShaderDefVal::UInt("EDGE_FADE_CELLS".into(), EDGE_FADE_CELLS),
-            ShaderDefVal::UInt("STEPS_PER_SECOND".into(), STEPS_PER_SECOND),
-            ShaderDefVal::UInt("DRY_DEPTH_MM".into(), DRY_DEPTH_MM),
-        ],
-        immediate_size: std::mem::size_of::<SimParams>() as u32,
-        ..Default::default()
-    });
+    let queue = |coarsening: u32| {
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![texture_bind_group_layout.clone()],
+            shader: shader.clone(),
+            entry_point: Some(Cow::from("main")),
+            shader_defs: vec![
+                ShaderDefVal::UInt("WORKGROUP_SIZE".into(), WORKGROUP_SIZE),
+                ShaderDefVal::UInt("MAX_DISPLACEMENTS".into(), MAX_DISPLACEMENTS as u32),
+                ShaderDefVal::UInt("MAX_SOURCES".into(), MAX_SOURCES as u32),
+                ShaderDefVal::UInt("EDGE_FADE_CELLS".into(), EDGE_FADE_CELLS),
+                ShaderDefVal::UInt("STEPS_PER_SECOND".into(), STEPS_PER_SECOND),
+                ShaderDefVal::UInt("DRY_DEPTH_MM".into(), DRY_DEPTH_MM),
+                ShaderDefVal::UInt("COARSENING".into(), coarsening),
+            ],
+            immediate_size: std::mem::size_of::<SimParams>() as u32,
+            ..Default::default()
+        })
+    };
+    let fine = queue(1);
+    let coarse = queue(COARSE_FACTOR);
     commands.insert_resource(WaterRenderPipeline {
         layout: texture_bind_group_layout,
-        pipeline: update_pipeline,
+        fine,
+        coarse,
     });
 }
 
 fn prepare_water_bindgroups(
     mut commands: Commands,
-    bind_group: Option<Res<WaterBindGroup>>,
+    bind_groups: Option<Res<WaterBindGroups>>,
     pipeline: Res<WaterRenderPipeline>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
@@ -645,21 +740,30 @@ fn prepare_water_bindgroups(
     uploaded.items[..sources_main.buffer.len()].copy_from_slice(&sources_main.buffer);
     sources.buffer.write_buffer(&render_device, &render_queue);
 
-    if bind_group.is_some() {
+    if bind_groups.is_some() {
         return;
     }
+    let image = |handle: &Handle<Image>| gpu_images.get(handle).map(|i| i.texture_view.clone());
     let (
         Some(water),
         Some(flows),
         Some(base),
         Some(cell_scratch),
+        Some(coarse_water),
+        Some(coarse_flows),
+        Some(coarse_base),
+        Some(coarse_scratch),
         Some(samples),
         Some(active_groups),
     ) = (
-        gpu_images.get(&water_images.water),
-        gpu_images.get(&water_images.flows),
-        gpu_images.get(&water_images.base_height),
-        gpu_images.get(&water_images.cell_scratch),
+        image(&water_images.water),
+        image(&water_images.flows),
+        image(&water_images.base_height),
+        image(&water_images.cell_scratch),
+        image(&water_images.coarse_water),
+        image(&water_images.coarse_flows),
+        image(&water_images.coarse_base_height),
+        image(&water_images.coarse_scratch),
         gpu_buffers.get(&water_images.samples),
         gpu_buffers.get(&water_images.active_groups),
     )
@@ -667,27 +771,39 @@ fn prepare_water_bindgroups(
         return;
     };
 
-    let bind_group = render_device.create_bind_group(
-        None,
-        &pipeline_cache.get_bind_group_layout(&pipeline.layout),
-        &BindGroupEntries::sequential((
-            &water.texture_view,
-            &flows.texture_view,
-            displacement.buffer.binding().unwrap(),
-            &base.texture_view,
-            &cell_scratch.texture_view,
-            samples.buffer.as_entire_buffer_binding(),
-            active_groups.buffer.as_entire_buffer_binding(),
-            sources.buffer.binding().unwrap(),
-        )),
-    );
-    commands.insert_resource(WaterBindGroup(bind_group));
+    let layout = pipeline_cache.get_bind_group_layout(&pipeline.layout);
+    let bind_group = |own: [&TextureView; 4], other: [&TextureView; 4]| {
+        render_device.create_bind_group(
+            None,
+            &layout,
+            &BindGroupEntries::sequential((
+                own[0],
+                own[1],
+                displacement.buffer.binding().unwrap(),
+                own[2],
+                own[3],
+                samples.buffer.as_entire_buffer_binding(),
+                active_groups.buffer.as_entire_buffer_binding(),
+                sources.buffer.binding().unwrap(),
+                other[0],
+                other[1],
+                other[2],
+                other[3],
+            )),
+        )
+    };
+    let fine = [&water, &flows, &base, &cell_scratch];
+    let coarse = [&coarse_water, &coarse_flows, &coarse_base, &coarse_scratch];
+    commands.insert_resource(WaterBindGroups {
+        fine: bind_group(fine, coarse),
+        coarse: bind_group(coarse, fine),
+    });
 }
 
-/// The textures the simulation reads and writes, all window textures, the
-/// buffer the per-object samples are read back through and the one that marks
-/// which parts of the stepped chunk are simulated. Present once the water
-/// clipmap exists.
+/// The textures the simulation reads and writes, the fine and the coarse
+/// window textures, the buffer the per-object samples are read back through
+/// and the one that marks which parts of the centre chunk are simulated.
+/// Present once the water clipmap exists.
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct WaterHeightTexture {
@@ -695,6 +811,10 @@ pub struct WaterHeightTexture {
     pub flows: Handle<Image>,
     pub base_height: Handle<Image>,
     pub cell_scratch: Handle<Image>,
+    pub coarse_water: Handle<Image>,
+    pub coarse_flows: Handle<Image>,
+    pub coarse_base_height: Handle<Image>,
+    pub coarse_scratch: Handle<Image>,
     pub samples: Handle<ShaderBuffer>,
     pub active_groups: Handle<ShaderBuffer>,
 }
@@ -787,11 +907,20 @@ impl ChunkGpuReady {
 
 fn mark_chunks_ready(
     ready: Res<ChunkGpuReady>,
-    bind_group: Option<Res<WaterBindGroup>>,
+    pipeline: Option<Res<WaterRenderPipeline>>,
+    pipeline_cache: Res<PipelineCache>,
+    bind_groups: Option<Res<WaterBindGroups>>,
+    sync: Res<CoarseSync>,
     staging: Option<Res<StagingBuffers>>,
     gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
 ) {
-    let all_there = bind_group.is_some()
+    let sim_running = match (pipeline, bind_groups) {
+        (Some(pipeline), Some(bind_groups)) => {
+            grids(&pipeline, &pipeline_cache, &bind_groups).is_some() && sync.centre.is_some()
+        }
+        _ => false,
+    };
+    let all_there = sim_running
         && staging.is_some_and(|s| s.buffers.iter().all(|b| gpu_buffers.get(b).is_some()));
     ready.0.store(all_there, Ordering::Relaxed);
 }
@@ -840,12 +969,31 @@ fn swap_chunks(
     water_images: Option<Res<WaterHeightTexture>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
+    pipeline: Option<Res<WaterRenderPipeline>>,
+    pipeline_cache: Res<PipelineCache>,
+    bind_groups: Option<Res<WaterBindGroups>>,
+    mut sync: ResMut<CoarseSync>,
     mut zeros: Local<Option<Buffer>>,
 ) {
     if swaps.0.is_empty() {
         return;
     }
     let water_images = water_images.expect("chunk swap queued before the water textures exist");
+    let pipeline = pipeline.expect("chunk swap queued before the sim pipelines exist");
+    let bind_groups = bind_groups.expect("chunk swap queued before the sim bind groups exist");
+    let (fine, coarse) = grids(&pipeline, &pipeline_cache, &bind_groups)
+        .expect("chunk swap queued before the sim pipelines are compiled");
+    {
+        let mut pass = render_context
+            .command_encoder()
+            .begin_compute_pass(&ComputePassDescriptor::default());
+        for swap in &swaps.0 {
+            if sync.centre != Some(swap.leaving) {
+                fine.slot_pass(&mut pass, PASS_PROLONG, swap.leaving);
+            }
+        }
+    }
+    let entering: Vec<ChunkCoord> = swaps.0.iter().map(|swap| swap.entering).collect();
     let texture = |handle: &Handle<Image>| {
         gpu_images
             .get(handle)
@@ -913,6 +1061,13 @@ fn swap_chunks(
                 chunk_extent(),
             );
         }
+    }
+    let mut pass = render_context
+        .command_encoder()
+        .begin_compute_pass(&ComputePassDescriptor::default());
+    for chunk in entering {
+        coarse.slot_pass(&mut pass, PASS_RESTRICT, chunk);
+        sync.entered.push(chunk);
     }
 }
 

@@ -14,6 +14,11 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var base_height_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var<uniform> window_origin: vec2u;
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> shape: heightfield::Shape;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var coarse_water_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var coarse_water_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var coarse_base_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109) var coarse_base_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(110) var<uniform> centre: vec2u;
 
 const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
 
@@ -22,12 +27,23 @@ struct Column {
     ground: f32,
 }
 
+// Water and ground of world cell `cell`; outside the centre chunk the water
+// reaches up to its coarse cell's surface, and is dry while that is.
 fn column(cell: vec2i) -> Column {
     let texel = grid::window_texel(cell, window_origin);
-    return Column(
-        textureLoad(water_height_texture, texel, 0).r,
-        textureLoad(base_height_texture, texel, 0).r,
-    );
+    let ground = textureLoad(base_height_texture, texel, 0).r;
+    let chunk = vec2u(clamp(cell, vec2i(0), vec2i(i32(grid::WORLD_DIM) - 1))) / grid::CHUNK_DIM;
+    if all(chunk == centre) {
+        return Column(textureLoad(water_height_texture, texel, 0).r, ground);
+    }
+    let coarse_cell = vec2i(floor(vec2f(cell) / f32(grid::COARSE_FACTOR)));
+    let coarse_texel = grid::coarse_window_texel(coarse_cell, window_origin);
+    let coarse_water = textureLoad(coarse_water_texture, coarse_texel, 0).r;
+    if coarse_water <= DRY_DEPTH {
+        return Column(0.0, ground);
+    }
+    let surface = textureLoad(coarse_base_texture, coarse_texel, 0).r + coarse_water;
+    return Column(max(surface - ground, 0.0), ground);
 }
 
 fn surface(cell: vec2i) -> f32 {
