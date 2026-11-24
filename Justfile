@@ -62,6 +62,7 @@ check-web:
 	cargo check \
 	  --config 'profile.web.inherits="dev"' \
 	  --profile ci \
+	  --lib --examples \
 	  --target {{WASM_TARGET}}
 
 # Point wgsl-analyzer at the WESL sources of the bevy version in Cargo.lock.
@@ -122,21 +123,21 @@ all: fmt docs clippy bevy-lints test check-web
 clean:
 	@cargo clean
 
-# Run native via Bevy CLI
+# Run the demo example natively via Bevy CLI
 run:
 	@env \
 	RUSTFLAGS="{{RUSTFLAGS_BASE}}" \
 	RUSTDOCFLAGS="{{RUSTDOCFLAGS_BASE}}" \
-	bevy run
+	bevy run --example demo
 
-# Run web via Bevy CLI
+# Run the demo example on the web via Bevy CLI
 # Bevy CLI handles building to wasm32-unknown-unknown and serving locally.
 # Panics at startup: a browser has no file system to read assets/terrain from.
 run-web:
 	@env \
 	RUSTFLAGS="{{RUSTFLAGS_BASE}}" \
 	RUSTDOCFLAGS="{{RUSTDOCFLAGS_BASE}}" \
-	bevy run web
+	bevy run --example demo web
 
 TERRAIN_DIR := "assets/terrain"
 TERRAIN_PIN := "assets/terrain.release"
