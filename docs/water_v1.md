@@ -8,8 +8,8 @@ tags:
 # Water Simulation
 
 This crate is being built as a library for simulating and drawing water on
-terrain, not as a game. The binary is a demo scene: its spheres are plain shapes
-that show the simulation working.
+terrain, not as a game. The `demo` example is a demo scene: its spheres are plain
+shapes that show the simulation working.
 
 ## Overview
 

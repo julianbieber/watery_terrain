@@ -11,7 +11,7 @@ use bevy::{
     pbr::ExtendedMaterial,
     prelude::*,
     render::{
-        MainWorld, Render, RenderApp, RenderStartup, RenderSystems,
+        Extract, MainWorld, Render, RenderApp, RenderStartup, RenderSystems,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         gpu_readback::{Readback, ReadbackComplete},
         render_asset::RenderAssets,
@@ -42,12 +42,12 @@ use std::{
 };
 
 use crate::{
+    TerrainScoped, WateryTerrainSystems,
     chunks::{ChunkLayout, ChunkSwap, Parked, StagingBuffers, SwapQueue, park_objects},
     grid::{
         CELLS_PER_METER, CHUNK_DIM, COARSE_FACTOR, ChunkCoord, WINDOW_CHUNKS, WINDOW_DIM, chunk_of,
     },
     render::clipmap::WaterTerrainMaterial,
-    screens::Screen,
 };
 
 const WORKGROUP_SIZE: u32 = 8;
@@ -121,7 +121,7 @@ impl Plugin for WaterSimPlugin {
         let ready = ChunkGpuReady::default();
         app.insert_resource(ready.clone());
         app.init_resource::<WaterSimSteps>();
-        app.add_systems(Update, count_sim_steps);
+        app.add_systems(Update, count_sim_steps.in_set(WateryTerrainSystems));
         app.insert_resource(DisplacementBufferMain { buffer: Vec::new() });
         app.insert_resource(SourceBufferMain { buffer: Vec::new() });
         app.init_resource::<WaterAtObjects>();
@@ -129,24 +129,21 @@ impl Plugin for WaterSimPlugin {
             Update,
             collect_displacements
                 .after(park_objects)
-                .run_if(in_state(Screen::Gameplay)),
+                .in_set(WateryTerrainSystems),
         );
         app.add_systems(
             Update,
             collect_sources
                 .run_if(resource_exists::<ChunkLayout>)
-                .run_if(in_state(Screen::Gameplay)),
+                .in_set(WateryTerrainSystems),
         );
-        app.add_systems(
-            FixedUpdate,
-            apply_water_forces.run_if(in_state(Screen::Gameplay)),
-        );
+        app.add_systems(FixedUpdate, apply_water_forces.in_set(WateryTerrainSystems));
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(RenderStartup, init_water_render);
         render_app.insert_resource(ready);
         render_app.init_resource::<ExtractedSwaps>();
         render_app.init_resource::<CoarseSync>();
-        render_app.add_systems(ExtractSchedule, extract_swaps);
+        render_app.add_systems(ExtractSchedule, (extract_swaps, drop_render_simulation));
         render_app.add_systems(
             Render,
             (prepare_water_bindgroups, mark_chunks_ready)
@@ -392,9 +389,41 @@ struct WaterBindGroups {
 
 #[derive(Resource, Clone, Default, ExtractResource)]
 #[extract_app(RenderApp)]
-struct WaterSimSteps {
+pub(crate) struct WaterSimSteps {
     due: u32,
     unsimulated_seconds: f32,
+}
+
+pub(crate) fn stop_simulation(
+    mut commands: Commands,
+    mut steps: ResMut<WaterSimSteps>,
+    mut displacements: ResMut<DisplacementBufferMain>,
+    mut sources: ResMut<SourceBufferMain>,
+    mut at_objects: ResMut<WaterAtObjects>,
+) {
+    *steps = WaterSimSteps::default();
+    displacements.buffer.clear();
+    sources.buffer.clear();
+    at_objects.0.clear();
+    commands.remove_resource::<WaterHeightTexture>();
+}
+
+fn drop_render_simulation(
+    mut commands: Commands,
+    main_water: Extract<Option<Res<WaterHeightTexture>>>,
+    water: Option<Res<WaterHeightTexture>>,
+    mut sync: ResMut<CoarseSync>,
+    mut swaps: ResMut<ExtractedSwaps>,
+) {
+    if main_water.is_some() || water.is_none() {
+        return;
+    }
+    commands.remove_resource::<WaterHeightTexture>();
+    commands.remove_resource::<WaterBindGroups>();
+    commands.remove_resource::<ChunkLayout>();
+    commands.remove_resource::<StagingBuffers>();
+    *sync = CoarseSync::default();
+    swaps.0.clear();
 }
 
 fn count_sim_steps(time: Res<Time>, mut steps: ResMut<WaterSimSteps>) {
@@ -611,10 +640,7 @@ fn init_internal_textures(
         RenderAssetUsages::RENDER_WORLD,
     ));
     commands
-        .spawn((
-            DespawnOnExit(Screen::Gameplay),
-            Readback::buffer(samples.clone()),
-        ))
+        .spawn((TerrainScoped, Readback::buffer(samples.clone())))
         .observe(store_water_samples);
 
     commands.insert_resource(WaterHeightTexture {
@@ -821,7 +847,7 @@ pub struct WaterHeightTexture {
 
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
-struct DisplacementBufferMain {
+pub(crate) struct DisplacementBufferMain {
     buffer: Vec<Displacement>,
 }
 
@@ -871,7 +897,7 @@ struct DisplacementBuffer {
 
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
-struct SourceBufferMain {
+pub(crate) struct SourceBufferMain {
     buffer: Vec<Source>,
 }
 

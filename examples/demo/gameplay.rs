@@ -1,34 +1,22 @@
 //! The demo scene a free camera flies through and its physics.
 
-use avian3d::{
-    PhysicsPlugins,
-    prelude::{Collider, ColliderDisabled, Gravity, GravityScale, LinearVelocity, RigidBody},
-};
+use avian3d::prelude::{Collider, GravityScale, LinearVelocity, RigidBody};
 use bevy::{
-    asset::RenderAssetUsages,
-    camera::{Exposure, visibility::NoFrustumCulling},
+    camera::Exposure,
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     light::CascadeShadowConfigBuilder,
-    pbr::ExtendedMaterial,
     prelude::*,
-    render::storage::ShaderBuffer,
 };
-
 use bevy_sky_gradient::plugin::SkyboxMagnetTag;
-
-use crate::{
-    chunks::{
-        CHUNK_BYTES, ChunkCollider, ChunkLayout, STAGING_BUFFERS, StagingBuffers, WorldChunks,
-    },
-    grid::{chunk_of, chunk_origin},
-    render::clipmap::{
-        ClipmapMarker, FollowTerrainMarker, TerrainHeightMapMesh, TerrainMaterial,
-        WaterTerrainMaterial,
-    },
-    screens::Screen,
-    water_sim::{WaterDisplacement, WaterMarker, WaterSink, WaterSource, coarse_window_texture},
+use watery_terrain::{
+    FollowTerrainMarker, SpawnWateryTerrain, TerrainHeightMapMesh, WaterDisplacement, WaterSink,
+    WaterSource, WateryTerrainPlugin, WorldChunks,
 };
+
+use crate::screens::Screen;
+
+const TERRAIN_DIR: &str = "assets/terrain";
 
 /// Spawns the gameplay scene on entering [`Screen::Gameplay`] and drives it
 /// while there.
@@ -38,11 +26,12 @@ impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Shadows>();
         app.add_systems(Update, apply_sun_shadows);
-        app.add_plugins(PhysicsPlugins::default());
-        app.insert_resource(Gravity::default());
+        app.add_plugins(WateryTerrainPlugin {
+            active: Screen::Gameplay,
+        });
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
-        app.add_systems(OnEnter(Screen::Gameplay), spawn_plane_dbg);
+        app.add_systems(OnEnter(Screen::Gameplay), spawn_scene);
         app.add_systems(Update, circle_spheres.run_if(in_state(Screen::Gameplay)));
     }
 }
@@ -122,97 +111,23 @@ fn spawn_player_camera(mut commands: Commands, shadows: Res<Shadows>) {
     ));
 }
 
-fn spawn_plane_dbg(
+fn spawn_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
-    mut rock_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
-    mut images: ResMut<Assets<Image>>,
-    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    let clipmap = TerrainHeightMapMesh {
-        smallest_quad: 0.1,
-        rings: 5,
-        smallest_quad_count: 160,
-    };
-
-    let world = WorldChunks::load();
-    let layout = ChunkLayout::centred_on(chunk_of(CAMERA_SPAWN.xz()));
-    let window_image = |water: bool| {
-        let mut image = world.window_heightmap(&layout, water).image();
-        image.asset_usage = RenderAssetUsages::RENDER_WORLD;
-        image
-    };
-
-    let mesh = clipmap.create_base_mesh();
-    let heightmap_texture = images.add(window_image(true));
-
-    let rock_mesh = clipmap.create_base_mesh();
-    let rock_heightmap_texture = images.add(window_image(false));
-
-    commands.insert_resource(StagingBuffers {
-        buffers: (0..STAGING_BUFFERS)
-            .map(|_| {
-                buffers.add(ShaderBuffer::with_size(
-                    CHUNK_BYTES,
-                    RenderAssetUsages::RENDER_WORLD,
-                ))
-            })
-            .collect(),
-        in_use_mask: 0,
+    commands.queue(SpawnWateryTerrain {
+        terrain: WorldChunks::load(TERRAIN_DIR),
+        centre: CAMERA_SPAWN,
+        clipmap: TerrainHeightMapMesh {
+            smallest_quad: 0.1,
+            rings: 5,
+            smallest_quad_count: 160,
+        },
+        water: water_material(&asset_server),
+        land: land_material(&asset_server),
     });
-    let material = water_material(&asset_server);
-    commands.spawn((
-        DespawnOnExit(Screen::Gameplay),
-        ClipmapMarker,
-        NoFrustumCulling,
-        Mesh3d(meshes.add(mesh)),
-        WaterMarker,
-        MeshMaterial3d(materials.add(ExtendedMaterial {
-            base: material,
-            extension: WaterTerrainMaterial {
-                water: heightmap_texture.clone(),
-                base: rock_heightmap_texture.clone(),
-                window_origin: layout.origin_uvec(),
-                shape: clipmap.shader_shape(),
-                coarse_water: images.add(coarse_window_texture()),
-                coarse_base: images.add(coarse_window_texture()),
-                centre: layout.centre_uvec(),
-            },
-        })),
-    ));
-
-    commands.spawn((
-        DespawnOnExit(Screen::Gameplay),
-        ClipmapMarker,
-        NoFrustumCulling,
-        Mesh3d(meshes.add(rock_mesh)),
-        MeshMaterial3d(
-            rock_materials.add(ExtendedMaterial::<StandardMaterial, TerrainMaterial> {
-                base: land_material(&asset_server),
-                extension: TerrainMaterial {
-                    height: rock_heightmap_texture,
-                    window_origin: layout.origin_uvec(),
-                    shape: clipmap.shader_shape(),
-                },
-            }),
-        ),
-    ));
-    for coord in world.coords() {
-        let mut collider = commands.spawn((
-            DespawnOnExit(Screen::Gameplay),
-            world.collider_heights(coord).avian(chunk_origin(coord)),
-            RigidBody::Static,
-            ChunkCollider { coord },
-        ));
-        if !layout.contains(coord) {
-            collider.insert(ColliderDisabled);
-        }
-    }
-    commands.insert_resource(layout);
-    commands.insert_resource(world);
 
     commands.spawn((
         floating_sphere(

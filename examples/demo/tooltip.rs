@@ -1,3 +1,6 @@
+//! Text whose known words open a tooltip of their own when clicked, nesting
+//! one tooltip inside another, in the demo's help screen.
+
 use std::collections::HashMap;
 
 use bevy::{

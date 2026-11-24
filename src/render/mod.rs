@@ -10,14 +10,14 @@ use bevy::{
 };
 
 use crate::{
+    WateryTerrainSystems,
     render::clipmap::{TerrainMaterial, WaterTerrainMaterial, follow},
-    screens::Screen,
     water_sim::DRY_DEPTH_MM,
 };
 
-pub struct TerrainRanderPlugin;
+pub struct TerrainRenderPlugin;
 
-impl Plugin for TerrainRanderPlugin {
+impl Plugin for TerrainRenderPlugin {
     fn build(&self, app: &mut App) {
         load_shader_library!(app, "terrain.wesl");
         load_shader_library!(app, "water.wesl", |settings: &mut ShaderSettings| {
@@ -36,6 +36,6 @@ impl Plugin for TerrainRanderPlugin {
             ExtendedMaterial<StandardMaterial, TerrainMaterial>,
         >::default());
 
-        app.add_systems(Update, follow.run_if(in_state(Screen::Gameplay)));
+        app.add_systems(Update, follow.in_set(WateryTerrainSystems));
     }
 }

@@ -1,3 +1,5 @@
+//! The demo's main menu, and the help screen it leads to.
+
 use bevy::{
     feathers::{
         controls::FeathersButton,
@@ -32,10 +34,6 @@ fn setup_ui(mut commands: Commands) {
     commands.spawn_scene(main_root());
 }
 
-/// 3 Buttons:
-/// * Play
-/// * Help
-/// * Quit
 fn main_root() -> impl Scene {
     bsn! {
         DespawnOnExit<Screen>(Screen::Main)

@@ -1,3 +1,5 @@
+//! Which screen the demo shows, as the state the rest of the demo runs in.
+
 use bevy::{
     app::{App, Plugin},
     state::{app::AppExtStates, state::States},

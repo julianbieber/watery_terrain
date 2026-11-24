@@ -19,13 +19,13 @@ use bevy::{
 use watershed::{FieldRole, TerrainDir};
 
 use crate::{
+    TerrainScoped, WateryTerrainSystems,
     grid::{
         CELL_SIZE, CHUNK_DIM, ChunkCoord, WINDOW_CHUNKS, WORLD_CHUNKS, WORLD_DIM, chunk_of,
         chunk_origin, texel_of,
     },
     heightmap::Heightmap,
     render::clipmap::{FollowTerrainMarker, TerrainMaterial, WaterTerrainMaterial},
-    screens::Screen,
     water_sim::ChunkGpuReady,
 };
 
@@ -62,7 +62,7 @@ impl Plugin for ChunkPlugin {
                 park_objects.run_if(resource_exists::<ChunkLayout>),
             )
                 .chain()
-                .run_if(in_state(Screen::Gameplay)),
+                .in_set(WateryTerrainSystems),
         );
     }
 }
@@ -88,8 +88,6 @@ impl Chunk {
         self.water[(local.y * CHUNK_DIM + local.x) as usize]
     }
 }
-
-const TERRAIN_DIR: &str = "assets/terrain";
 
 /// Takes the height field as terrain and the solved water depth as water.
 ///
@@ -138,12 +136,13 @@ pub struct WorldChunks {
 }
 
 impl WorldChunks {
-    /// Reads `assets/terrain` under the working directory.
+    /// Reads a watershed terrain export: a height field and its solved water
+    /// on the world's grid of chunks.
     ///
     /// Panics if the directory is missing or unreadable, or its grid is not the
     /// world's.
-    pub fn load() -> Self {
-        let dir = open_terrain(Path::new(TERRAIN_DIR));
+    pub fn load(dir: impl AsRef<Path>) -> Self {
+        let dir = open_terrain(dir.as_ref());
         let dir = &dir;
         let coords: Vec<ChunkCoord> = world_chunks().collect();
         let chunks = ComputeTaskPool::get().scope(|scope| {
@@ -416,7 +415,7 @@ fn shift_window(
         staging.in_use_mask |= bit;
         commands
             .spawn((
-                DespawnOnExit(Screen::Gameplay),
+                TerrainScoped,
                 Readback::buffer(buffer),
                 LeavingChunk {
                     coord: leaving,
@@ -480,6 +479,13 @@ pub fn park_objects(
                 .insert(Visibility::Inherited);
         }
     }
+}
+
+pub(crate) fn drop_world(mut commands: Commands, mut queue: ResMut<SwapQueue>) {
+    commands.remove_resource::<ChunkLayout>();
+    commands.remove_resource::<WorldChunks>();
+    commands.remove_resource::<StagingBuffers>();
+    queue.swaps.clear();
 }
 
 fn store_leaving_water(
@@ -599,7 +605,7 @@ mod tests {
     }
 
     fn committed_terrain() -> TerrainDir {
-        open_terrain(Path::new(TERRAIN_DIR))
+        open_terrain(Path::new("assets/terrain"))
     }
 
     #[test]

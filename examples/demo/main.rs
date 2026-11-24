@@ -1,4 +1,6 @@
-//! Entry point: builds a demo scene from the crate's plugins and runs it.
+//! A scene to fly through over the shipped terrain, with floating spheres, a
+//! spring and a drain: the library at work in a host app with its own menus,
+//! sky and camera.
 
 #![recursion_limit = "256"]
 
@@ -17,27 +19,16 @@ use bevy_sky_gradient::{
     sun::{SunDriverPlugin, SunSettings},
 };
 
-use crate::{
-    chunks::ChunkPlugin,
-    gameplay::Shadows,
-    grid::GridPlugin,
-    render::TerrainRanderPlugin,
-    screens::ScreenPlugin,
-    water_sim::{
-        DEFAULT_WIND_DEGREES, DEFAULT_WIND_HEAD, DEFAULT_WIND_SPEED, DEFAULT_WIND_WAVELENGTH,
-        WaterSimPlugin, Wind,
-    },
+use watery_terrain::{
+    DEFAULT_WIND_DEGREES, DEFAULT_WIND_HEAD, DEFAULT_WIND_SPEED, DEFAULT_WIND_WAVELENGTH, Wind,
 };
 
-mod chunks;
+use crate::{gameplay::Shadows, screens::ScreenPlugin};
+
 mod gameplay;
-mod grid;
-mod heightmap;
 mod main_screen;
-mod render;
 mod screens;
 mod tooltip;
-mod water_sim;
 
 /// Watery terrain demo.
 #[derive(Parser, Debug)]
@@ -92,6 +83,12 @@ fn within(
     }
 }
 
+macro_rules! v3 {
+    ($x:expr, $y:expr, $z:expr) => {
+        bevy::math::Vec3::new($x as f32, $y as f32, $z as f32)
+    };
+}
+
 fn main() -> AppExit {
     let args = Args::parse();
     let sky_plugin = SkyPlugin::builder()
@@ -141,26 +138,10 @@ fn main() -> AppExit {
         .build();
 
     App::new()
-        .add_plugins((
-            DefaultPlugins,
-            sky_plugin,
-            FeathersPlugins,
-            ScreenPlugin,
-            GridPlugin,
-            ChunkPlugin,
-            WaterSimPlugin,
-            TerrainRanderPlugin,
-        ))
+        .add_plugins((DefaultPlugins, sky_plugin, FeathersPlugins, ScreenPlugin))
         .insert_resource(args.shadows)
         .insert_resource(args.wind())
         .run()
-}
-
-#[macro_export]
-macro_rules! v3 {
-    ($x:expr, $y:expr, $z:expr) => {
-        bevy::math::Vec3::new($x as f32, $y as f32, $z as f32)
-    };
 }
 
 #[cfg(test)]
