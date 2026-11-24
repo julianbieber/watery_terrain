@@ -31,10 +31,15 @@ bevy = { version = "0.20", features  = ["bevy_feathers", "free_camera", "debug"]
 bevy_sky_gradient = { git = "https://github.com/julianbieber/bevy_sky_gradient.git", rev = "7c37d591f42383a3719769dfbd3408e53294d7d2" }
 clap = { version = "4.6.7", features = ["derive"] }
 watery_terrain_clipmap = { path = "crates/clipmap" }
+watery_terrain_sdf = { path = "crates/sdf" }
 
 [[example]]
 name = "demo"
 test = true
+
+[[example]]
+name = "sdf_demo"
+path = "examples/demo/sdf.rs"
 
 # Idiomatic Bevy code often triggers these lints, and the CI workflow treats them as errors.
 # In some cases they may still signal poor code quality however, so consider commenting out these lines.

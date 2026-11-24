@@ -4,6 +4,7 @@ use avian3d::prelude::{Collider, GravityScale, LinearVelocity, RigidBody};
 use bevy::{
     camera::Exposure,
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
+    core_pipeline::prepass::DepthPrepass,
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     light::CascadeShadowConfigBuilder,
     prelude::*,
@@ -14,23 +15,39 @@ use watery_terrain::{
     WateryTerrainPlugin, WorldChunks,
 };
 use watery_terrain_clipmap::{ClipmapPlugin, SpawnClipmapSurfaces, TerrainHeightMapMesh};
+use watery_terrain_sdf::{SdfPlugin, SdfShape, SpawnSdfSurfaces};
 
 use crate::screens::Screen;
 
 const TERRAIN_DIR: &str = "assets/terrain";
 
-/// Spawns the gameplay scene on entering [`Screen::Gameplay`] and drives it
-/// while there.
-pub struct GameplayPlugin;
+/// Spawns the gameplay scene on entering [`Screen::Gameplay`], its terrain
+/// drawn by `renderer`, and drives it while there.
+pub struct GameplayPlugin {
+    pub renderer: Renderer,
+}
+
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code, reason = "each demo binary constructs one renderer")]
+pub enum Renderer {
+    Clipmap,
+    RayMarched,
+}
 
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
+        app.insert_resource(self.renderer);
+        match self.renderer {
+            Renderer::Clipmap => app.add_plugins(ClipmapPlugin),
+            Renderer::RayMarched => app
+                .add_plugins(SdfPlugin)
+                .add_systems(Update, cycle_sdf_shape.run_if(in_state(Screen::Gameplay))),
+        };
         app.init_resource::<Shadows>();
         app.add_systems(Update, apply_sun_shadows);
         app.add_plugins(WateryTerrainPlugin {
             active: Screen::Gameplay,
         });
-        app.add_plugins(ClipmapPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_scene);
@@ -89,8 +106,8 @@ const CIRCLING_RADIUS: f32 = 2.5;
 #[derive(Component)]
 struct CirclingSphere;
 
-fn spawn_player_camera(mut commands: Commands, shadows: Res<Shadows>) {
-    commands.spawn((
+fn spawn_player_camera(mut commands: Commands, shadows: Res<Shadows>, renderer: Res<Renderer>) {
+    let mut camera = commands.spawn((
         DespawnOnExit(Screen::Gameplay),
         Camera3d::default(),
         Transform::from_translation(CAMERA_SPAWN).looking_at(POND + Vec3::Y, Vec3::Y),
@@ -111,10 +128,29 @@ fn spawn_player_camera(mut commands: Commands, shadows: Res<Shadows>) {
         },
         SkyboxMagnetTag,
     ));
+    if *renderer == Renderer::RayMarched {
+        camera.insert(DepthPrepass);
+    }
+}
+
+const SDF_SHAPES: [SdfShape; 4] = [
+    SdfShape::Smooth,
+    SdfShape::Voxels { level: 0 },
+    SdfShape::Voxels { level: 2 },
+    SdfShape::Voxels { level: 4 },
+];
+
+fn cycle_sdf_shape(keys: Res<ButtonInput<KeyCode>>, mut shape: ResMut<SdfShape>) {
+    if keys.just_pressed(KeyCode::KeyV) {
+        let at = SDF_SHAPES.iter().position(|s| s == &*shape).unwrap_or(0);
+        *shape = SDF_SHAPES[(at + 1) % SDF_SHAPES.len()];
+        info!(shape = ?*shape, "terrain shape");
+    }
 }
 
 fn spawn_scene(
     mut commands: Commands,
+    renderer: Res<Renderer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
@@ -123,15 +159,20 @@ fn spawn_scene(
         terrain: WorldChunks::load(TERRAIN_DIR),
         centre: CAMERA_SPAWN,
     });
-    commands.queue(SpawnClipmapSurfaces {
-        clipmap: TerrainHeightMapMesh {
-            smallest_quad: 0.1,
-            rings: 5,
-            smallest_quad_count: 160,
-        },
-        water: water_material(&asset_server),
-        land: land_material(&asset_server),
-    });
+    let water = water_material(&asset_server);
+    let land = land_material(&asset_server);
+    match *renderer {
+        Renderer::Clipmap => commands.queue(SpawnClipmapSurfaces {
+            clipmap: TerrainHeightMapMesh {
+                smallest_quad: 0.1,
+                rings: 5,
+                smallest_quad_count: 160,
+            },
+            water,
+            land,
+        }),
+        Renderer::RayMarched => commands.queue(SpawnSdfSurfaces { water, land }),
+    };
 
     commands.spawn((
         floating_sphere(

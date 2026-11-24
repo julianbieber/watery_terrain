@@ -43,6 +43,10 @@ fn column(
     return Column(max(surface - ground_height, 0.0), ground_height);
 }
 
+fn is_wet(c: Column) -> bool {
+    return c.water > DRY_DEPTH;
+}
+
 fn surface(c: Column) -> f32 {
     return c.water + c.ground;
 }
@@ -50,7 +54,7 @@ fn surface(c: Column) -> f32 {
 // Height the water of `c` is drawn at: its surface where there is water,
 // DRY_DROP below the ground where there is none.
 fn drawn(c: Column) -> f32 {
-    if c.water <= DRY_DEPTH {
+    if !is_wet(c) {
         return c.ground - DRY_DROP;
     }
     return c.water + c.ground;
