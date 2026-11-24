@@ -130,6 +130,13 @@ run:
 	RUSTDOCFLAGS="{{RUSTDOCFLAGS_BASE}}" \
 	bevy run --example demo
 
+# Run the demo drawn by the ray-marched renderer natively via Bevy CLI
+run-sdf:
+	@env \
+	RUSTFLAGS="{{RUSTFLAGS_BASE}}" \
+	RUSTDOCFLAGS="{{RUSTDOCFLAGS_BASE}}" \
+	bevy run --example sdf_demo
+
 # Run the demo example on the web via Bevy CLI
 # Bevy CLI handles building to wasm32-unknown-unknown and serving locally.
 # Panics at startup: a browser has no file system to read assets/terrain from.

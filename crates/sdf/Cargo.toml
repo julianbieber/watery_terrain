@@ -1,0 +1,13 @@
+[package]
+name = "watery_terrain_sdf"
+version = "0.1.0"
+edition = "2024"
+description = "The terrain and water of watery_terrain ray-marched over the window heightfields in the fragment shader."
+
+[dependencies]
+bevy.workspace = true
+bytemuck.workspace = true
+watery_terrain.workspace = true
+
+[lints]
+workspace = true

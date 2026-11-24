@@ -6234,6 +6234,7 @@ dependencies = [
  "tracing",
  "watershed",
  "watery_terrain_clipmap",
+ "watery_terrain_sdf",
 ]
 
 [[package]]
@@ -6241,6 +6242,15 @@ name = "watery_terrain_clipmap"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "watery_terrain",
+]
+
+[[package]]
+name = "watery_terrain_sdf"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bytemuck",
  "watery_terrain",
 ]
 
