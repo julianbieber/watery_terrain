@@ -2,19 +2,17 @@
 //! plugin's systems to run on.
 
 use avian3d::prelude::{ColliderDisabled, RigidBody};
-use bevy::{
-    asset::RenderAssetUsages, camera::visibility::NoFrustumCulling, pbr::ExtendedMaterial,
-    prelude::*, render::storage::ShaderBuffer,
-};
+use bevy::{asset::RenderAssetUsages, prelude::*, render::storage::ShaderBuffer};
 
 use crate::{
     TerrainScoped,
     chunks::{
-        CHUNK_BYTES, ChunkCollider, ChunkLayout, STAGING_BUFFERS, StagingBuffers, WorldChunks,
+        CHUNK_BYTES, ChunkCollider, ChunkLayout, STAGING_BUFFERS, StagingBuffers, WindowHeights,
+        WorldChunks,
     },
     grid::{chunk_of, chunk_origin},
-    render::clipmap::{ClipmapMarker, TerrainHeightMapMesh, TerrainMaterial, WaterTerrainMaterial},
-    water_sim::{WaterMarker, coarse_window_texture},
+    render::clipmap::{ClipmapSurfaces, TerrainHeightMapMesh, spawn_surfaces},
+    water_sim::start_simulation,
 };
 
 /// Spawns the water and terrain surfaces of `terrain` and a static collider
@@ -41,36 +39,40 @@ impl Command for SpawnWateryTerrain {
     type Out = ();
 
     fn apply(self, world: &mut World) {
+        let SpawnWateryTerrain {
+            terrain,
+            centre,
+            clipmap,
+            water,
+            land,
+        } = self;
         world
-            .run_system_cached_with(spawn, self)
+            .run_system_cached_with(spawn, (terrain, centre))
             .expect("spawning the watery terrain");
+        world
+            .run_system_cached(start_simulation)
+            .expect("starting the water simulation");
+        world
+            .run_system_cached_with(
+                spawn_surfaces,
+                ClipmapSurfaces {
+                    clipmap,
+                    water,
+                    land,
+                },
+            )
+            .expect("spawning the terrain surfaces");
     }
 }
 
 fn spawn(
-    In(setup): In<SpawnWateryTerrain>,
+    In((terrain, centre)): In<(WorldChunks, Vec3)>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut water_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
-    mut land_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
-    let SpawnWateryTerrain {
-        terrain,
-        centre,
-        clipmap,
-        water,
-        land,
-    } = setup;
     let layout = ChunkLayout::centred_on(chunk_of(centre.xz()));
-    let mut window_image = |water: bool| {
-        let mut image = terrain.window_heightmap(&layout, water).image();
-        image.asset_usage = RenderAssetUsages::RENDER_WORLD;
-        images.add(image)
-    };
-    let water_heights = window_image(true);
-    let land_heights = window_image(false);
+    commands.insert_resource(WindowHeights::new(&terrain, &layout, &mut images));
 
     commands.insert_resource(StagingBuffers {
         buffers: (0..STAGING_BUFFERS)
@@ -83,41 +85,6 @@ fn spawn(
             .collect(),
         in_use_mask: 0,
     });
-
-    commands.spawn((
-        TerrainScoped,
-        ClipmapMarker,
-        NoFrustumCulling,
-        Mesh3d(meshes.add(clipmap.create_base_mesh())),
-        WaterMarker,
-        MeshMaterial3d(water_materials.add(ExtendedMaterial {
-            base: water,
-            extension: WaterTerrainMaterial {
-                water: water_heights,
-                base: land_heights.clone(),
-                window_origin: layout.origin_uvec(),
-                shape: clipmap.shader_shape(),
-                coarse_water: images.add(coarse_window_texture()),
-                coarse_base: images.add(coarse_window_texture()),
-                centre: layout.centre_uvec(),
-            },
-        })),
-    ));
-
-    commands.spawn((
-        TerrainScoped,
-        ClipmapMarker,
-        NoFrustumCulling,
-        Mesh3d(meshes.add(clipmap.create_base_mesh())),
-        MeshMaterial3d(land_materials.add(ExtendedMaterial {
-            base: land,
-            extension: TerrainMaterial {
-                height: land_heights,
-                window_origin: layout.origin_uvec(),
-                shape: clipmap.shader_shape(),
-            },
-        })),
-    ));
 
     for coord in terrain.coords() {
         let mut collider = commands.spawn((

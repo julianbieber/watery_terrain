@@ -3,12 +3,18 @@
 
 use bevy::{
     asset::{AssetPath, RenderAssetUsages, embedded_path},
+    camera::visibility::NoFrustumCulling,
     mesh::PrimitiveTopology,
-    pbr::MaterialExtension,
+    pbr::{ExtendedMaterial, MaterialExtension},
     platform::collections::HashMap,
     prelude::*,
     render::render_resource::{AsBindGroup, ShaderType},
     shader::ShaderRef,
+};
+
+use crate::{
+    TerrainScoped,
+    chunks::{ChunkLayout, WindowHeights},
 };
 
 /// The entity the clipmaps and the chunk window follow. The systems that
@@ -30,6 +36,84 @@ pub fn follow(
     for mut t in &mut terrain {
         t.translation.x = following.translation.x;
         t.translation.z = following.translation.z;
+    }
+}
+
+/// How the water and land clipmaps look and are meshed.
+pub(crate) struct ClipmapSurfaces {
+    pub clipmap: TerrainHeightMapMesh,
+    pub water: StandardMaterial,
+    pub land: StandardMaterial,
+}
+
+type WaterSurface = ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>;
+type LandSurface = ExtendedMaterial<StandardMaterial, TerrainMaterial>;
+
+pub(crate) fn spawn_surfaces(
+    In(surfaces): In<ClipmapSurfaces>,
+    mut commands: Commands,
+    heights: Res<WindowHeights>,
+    layout: Res<ChunkLayout>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut water_materials: ResMut<Assets<WaterSurface>>,
+    mut land_materials: ResMut<Assets<LandSurface>>,
+) {
+    let ClipmapSurfaces {
+        clipmap,
+        water,
+        land,
+    } = surfaces;
+    commands.spawn((
+        TerrainScoped,
+        ClipmapMarker,
+        NoFrustumCulling,
+        Mesh3d(meshes.add(clipmap.create_base_mesh())),
+        MeshMaterial3d(water_materials.add(ExtendedMaterial {
+            base: water,
+            extension: WaterTerrainMaterial {
+                water: heights.water.clone(),
+                base: heights.ground.clone(),
+                window_origin: layout.origin_uvec(),
+                shape: clipmap.shader_shape(),
+                coarse_water: heights.coarse_water.clone(),
+                coarse_base: heights.coarse_ground.clone(),
+                centre: layout.centre_uvec(),
+            },
+        })),
+    ));
+    commands.spawn((
+        TerrainScoped,
+        ClipmapMarker,
+        NoFrustumCulling,
+        Mesh3d(meshes.add(clipmap.create_base_mesh())),
+        MeshMaterial3d(land_materials.add(ExtendedMaterial {
+            base: land,
+            extension: TerrainMaterial {
+                height: heights.ground.clone(),
+                window_origin: layout.origin_uvec(),
+                shape: clipmap.shader_shape(),
+            },
+        })),
+    ));
+}
+
+pub(crate) fn follow_window(
+    layout: Res<ChunkLayout>,
+    water_surfaces: Query<&MeshMaterial3d<WaterSurface>>,
+    land_surfaces: Query<&MeshMaterial3d<LandSurface>>,
+    mut water_materials: ResMut<Assets<WaterSurface>>,
+    mut land_materials: ResMut<Assets<LandSurface>>,
+) {
+    for surface in &water_surfaces {
+        if let Some(mut material) = water_materials.get_mut(surface.id()) {
+            material.extension.window_origin = layout.origin_uvec();
+            material.extension.centre = layout.centre_uvec();
+        }
+    }
+    for surface in &land_surfaces {
+        if let Some(mut material) = land_materials.get_mut(surface.id()) {
+            material.extension.window_origin = layout.origin_uvec();
+        }
     }
 }
 

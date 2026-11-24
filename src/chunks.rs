@@ -6,7 +6,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use avian3d::prelude::{ColliderDisabled, RigidBody, RigidBodyDisabled};
 use bevy::{
-    pbr::ExtendedMaterial,
+    asset::RenderAssetUsages,
     prelude::*,
     render::{
         RenderApp,
@@ -25,8 +25,8 @@ use crate::{
         chunk_origin, texel_of,
     },
     heightmap::Heightmap,
-    render::clipmap::{FollowTerrainMarker, TerrainMaterial, WaterTerrainMaterial},
-    water_sim::ChunkGpuReady,
+    render::clipmap::FollowTerrainMarker,
+    water_sim::{ChunkGpuReady, coarse_window_texture},
 };
 
 /// How far, in metres, the camera has to leave the centre chunk on an axis
@@ -360,6 +360,43 @@ pub struct StagingBuffers {
     pub in_use_mask: u32,
 }
 
+/// The window's water depths and terrain heights as textures, at the texels
+/// [`ChunkLayout`] places each window chunk on: `water` and `ground` on the
+/// fine grid, `coarse_water` and `coarse_ground` on the grid `COARSE_FACTOR`
+/// times coarser. The simulation writes the water ones in place and keeps the
+/// ground ones in step as chunks enter the window; anything drawing the
+/// surfaces reads all four. Present while a world is up.
+///
+/// [`COARSE_FACTOR`]: crate::grid::COARSE_FACTOR
+#[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
+pub struct WindowHeights {
+    pub water: Handle<Image>,
+    pub ground: Handle<Image>,
+    pub coarse_water: Handle<Image>,
+    pub coarse_ground: Handle<Image>,
+}
+
+impl WindowHeights {
+    /// The fine textures filled from `world`'s chunks under `layout`, the
+    /// coarse ones zeroed for the simulation to fill once it starts.
+    pub fn new(world: &WorldChunks, layout: &ChunkLayout, images: &mut Assets<Image>) -> Self {
+        let mut fine = |water: bool| {
+            let mut image = world.window_heightmap(layout, water).image();
+            image.asset_usage = RenderAssetUsages::RENDER_WORLD;
+            images.add(image)
+        };
+        let water = fine(true);
+        let ground = fine(false);
+        Self {
+            water,
+            ground,
+            coarse_water: images.add(coarse_window_texture()),
+            coarse_ground: images.add(coarse_window_texture()),
+        }
+    }
+}
+
 /// Static terrain collider of one chunk; disabled while the chunk is outside
 /// the window.
 #[derive(Component)]
@@ -379,7 +416,7 @@ pub struct LeavingChunk {
 #[derive(Component)]
 pub struct Parked;
 
-fn shift_window(
+pub(crate) fn shift_window(
     mut commands: Commands,
     camera: Single<&Transform, With<FollowTerrainMarker>>,
     mut layout: ResMut<ChunkLayout>,
@@ -387,12 +424,6 @@ fn shift_window(
     mut queue: ResMut<SwapQueue>,
     mut staging: ResMut<StagingBuffers>,
     colliders: Query<(Entity, &ChunkCollider)>,
-    water_surfaces: Query<
-        &MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>,
-    >,
-    terrain_surfaces: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
-    mut water_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
-    mut terrain_materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
 ) {
     if staging.in_use_mask != 0 {
         return;
@@ -441,18 +472,6 @@ fn shift_window(
     }
 
     *layout = next;
-    let origin = next.origin_uvec();
-    for surface in &water_surfaces {
-        if let Some(mut material) = water_materials.get_mut(surface.id()) {
-            material.extension.window_origin = origin;
-            material.extension.centre = next.centre_uvec();
-        }
-    }
-    for surface in &terrain_surfaces {
-        if let Some(mut material) = terrain_materials.get_mut(surface.id()) {
-            material.extension.window_origin = origin;
-        }
-    }
 }
 
 /// Deactivates every physics object outside the window and reactivates the

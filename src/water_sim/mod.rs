@@ -8,7 +8,6 @@ use avian3d::prelude::{
 use bevy::{
     asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
     ecs::entity::EntityHashMap,
-    pbr::ExtendedMaterial,
     prelude::*,
     render::{
         Extract, MainWorld, Render, RenderApp, RenderStartup, RenderSystems,
@@ -43,11 +42,12 @@ use std::{
 
 use crate::{
     TerrainScoped, WateryTerrainSystems,
-    chunks::{ChunkLayout, ChunkSwap, Parked, StagingBuffers, SwapQueue, park_objects},
+    chunks::{
+        ChunkLayout, ChunkSwap, Parked, StagingBuffers, SwapQueue, WindowHeights, park_objects,
+    },
     grid::{
         CELLS_PER_METER, CHUNK_DIM, COARSE_FACTOR, ChunkCoord, WINDOW_CHUNKS, WINDOW_DIM, chunk_of,
     },
-    render::clipmap::WaterTerrainMaterial,
 };
 
 const WORKGROUP_SIZE: u32 = 8;
@@ -91,8 +91,7 @@ pub const MAX_SOURCES: usize = 64;
 /// shader reads it as `constants::EDGE_FADE_CELLS`.
 pub const EDGE_FADE_CELLS: u32 = 100;
 
-/// Simulates the water drawn by the [`WaterMarker`] clipmap, the water
-/// [`WaterSource`] and [`WaterSink`] entities add and take, and its
+/// Simulates the water in [`WindowHeights`], the water [`WaterSource`] and [`WaterSink`] entities add and take, and its
 /// interaction with [`WaterDisplacement`] objects. Every step advances the
 /// whole window: the chunk the window follows the camera with on the fine
 /// grid, every other window chunk on a grid [`COARSE_FACTOR`] times coarser,
@@ -102,15 +101,11 @@ pub const EDGE_FADE_CELLS: u32 = 100;
 /// coarse grid.
 pub struct WaterSimPlugin;
 
-/// The water clipmap. Adding it starts the simulation on the textures of the
-/// entity's [`WaterTerrainMaterial`], which the entity must already carry.
-#[derive(Component)]
-pub struct WaterMarker;
-
 impl Plugin for WaterSimPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "water.wesl");
         app.add_plugins(ExtractResourcePlugin::<WaterHeightTexture>::default());
+        app.add_plugins(ExtractResourcePlugin::<WindowHeights>::default());
         app.add_plugins(ExtractResourcePlugin::<DisplacementBufferMain>::default());
         app.add_plugins(ExtractResourcePlugin::<SourceBufferMain>::default());
         app.add_plugins(ExtractResourcePlugin::<WaterSimSteps>::default());
@@ -168,8 +163,6 @@ impl Plugin for WaterSimPlugin {
                 .chain()
                 .in_set(RenderGraphSystems::Begin),
         );
-
-        app.add_observer(init_internal_textures);
     }
 }
 
@@ -406,6 +399,7 @@ pub(crate) fn stop_simulation(
     sources.buffer.clear();
     at_objects.0.clear();
     commands.remove_resource::<WaterHeightTexture>();
+    commands.remove_resource::<WindowHeights>();
 }
 
 fn drop_render_simulation(
@@ -419,6 +413,7 @@ fn drop_render_simulation(
         return;
     }
     commands.remove_resource::<WaterHeightTexture>();
+    commands.remove_resource::<WindowHeights>();
     commands.remove_resource::<WaterBindGroups>();
     commands.remove_resource::<ChunkLayout>();
     commands.remove_resource::<StagingBuffers>();
@@ -616,17 +611,12 @@ struct SimParams {
     padding: u32,
 }
 
-fn init_internal_textures(
-    trigger: On<Add<(WaterMarker,)>>,
+pub(crate) fn start_simulation(
     mut commands: Commands,
-    material: Query<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
-    water_terrain_materials: Res<Assets<ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>>>,
     mut images: ResMut<Assets<Image>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     info!("adding internal water tex");
-    let material = material.get(trigger.entity).unwrap();
-    let material = water_terrain_materials.get(material.0.id()).unwrap();
     let flows = images.add(zeroed_storage_texture(TextureFormat::R32Uint, WINDOW_DIM));
     let cell_scratch = images.add(zeroed_storage_texture(TextureFormat::R32Float, WINDOW_DIM));
     let coarse_flows = images.add(zeroed_storage_texture(TextureFormat::R32Uint, COARSE_DIM));
@@ -644,13 +634,9 @@ fn init_internal_textures(
         .observe(store_water_samples);
 
     commands.insert_resource(WaterHeightTexture {
-        water: material.extension.water.clone(),
         flows,
-        base_height: material.extension.base.clone(),
         cell_scratch,
-        coarse_water: material.extension.coarse_water.clone(),
         coarse_flows,
-        coarse_base_height: material.extension.coarse_base.clone(),
         coarse_scratch,
         samples,
         active_groups,
@@ -660,8 +646,8 @@ fn init_internal_textures(
 const COARSE_DIM: u32 = WINDOW_DIM / COARSE_FACTOR;
 
 /// A zeroed coarse window texture of the format the sim keeps its coarse
-/// water and ground in, for [`WaterTerrainMaterial`]'s `coarse_water` and
-/// `coarse_base`; the sim fills both from the fine textures once it starts.
+/// water and ground in; the sim fills both from the fine textures once it
+/// starts.
 pub fn coarse_window_texture() -> Image {
     let mut image = zeroed_storage_texture(TextureFormat::R32Float, COARSE_DIM);
     image.texture_descriptor.usage |= TextureUsages::TEXTURE_BINDING;
@@ -747,6 +733,7 @@ fn prepare_water_bindgroups(
     gpu_images: Res<RenderAssets<GpuImage>>,
     gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
     water_images: If<Res<WaterHeightTexture>>,
+    heights: If<Res<WindowHeights>>,
     mut displacement: If<ResMut<DisplacementBuffer>>,
     displacement_main: If<Res<DisplacementBufferMain>>,
     mut sources: If<ResMut<SourceBuffer>>,
@@ -782,13 +769,13 @@ fn prepare_water_bindgroups(
         Some(samples),
         Some(active_groups),
     ) = (
-        image(&water_images.water),
+        image(&heights.water),
         image(&water_images.flows),
-        image(&water_images.base_height),
+        image(&heights.ground),
         image(&water_images.cell_scratch),
-        image(&water_images.coarse_water),
+        image(&heights.coarse_water),
         image(&water_images.coarse_flows),
-        image(&water_images.coarse_base_height),
+        image(&heights.coarse_ground),
         image(&water_images.coarse_scratch),
         gpu_buffers.get(&water_images.samples),
         gpu_buffers.get(&water_images.active_groups),
@@ -826,20 +813,16 @@ fn prepare_water_bindgroups(
     });
 }
 
-/// The textures the simulation reads and writes, the fine and the coarse
-/// window textures, the buffer the per-object samples are read back through
+/// The textures the simulation keeps beside [`WindowHeights`], on the fine and
+/// the coarse grid, the buffer the per-object samples are read back through
 /// and the one that marks which parts of the centre chunk are simulated.
-/// Present once the water clipmap exists.
+/// Present while the simulation runs.
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
 pub struct WaterHeightTexture {
-    pub water: Handle<Image>,
     pub flows: Handle<Image>,
-    pub base_height: Handle<Image>,
     pub cell_scratch: Handle<Image>,
-    pub coarse_water: Handle<Image>,
     pub coarse_flows: Handle<Image>,
-    pub coarse_base_height: Handle<Image>,
     pub coarse_scratch: Handle<Image>,
     pub samples: Handle<ShaderBuffer>,
     pub active_groups: Handle<ShaderBuffer>,
@@ -993,6 +976,7 @@ fn swap_chunks(
     mut render_context: RenderContext,
     mut swaps: ResMut<ExtractedSwaps>,
     water_images: Option<Res<WaterHeightTexture>>,
+    heights: Option<Res<WindowHeights>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     gpu_buffers: Res<RenderAssets<GpuShaderBuffer>>,
     pipeline: Option<Res<WaterRenderPipeline>>,
@@ -1005,6 +989,7 @@ fn swap_chunks(
         return;
     }
     let water_images = water_images.expect("chunk swap queued before the water textures exist");
+    let heights = heights.expect("chunk swap queued before the window textures exist");
     let pipeline = pipeline.expect("chunk swap queued before the sim pipelines exist");
     let bind_groups = bind_groups.expect("chunk swap queued before the sim bind groups exist");
     let (fine, coarse) = grids(&pipeline, &pipeline_cache, &bind_groups)
@@ -1027,8 +1012,8 @@ fn swap_chunks(
             .texture
             .clone()
     };
-    let water = texture(&water_images.water);
-    let base = texture(&water_images.base_height);
+    let water = texture(&heights.water);
+    let base = texture(&heights.ground);
     let flows = [
         texture(&water_images.flows),
         texture(&water_images.cell_scratch),
