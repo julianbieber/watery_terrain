@@ -1,5 +1,5 @@
-//! Bringing a world up from a host's terrain and materials, for the
-//! plugin's systems to run on.
+//! Bringing a world up from a host's terrain, for the plugin's systems to run
+//! on.
 
 use avian3d::prelude::{ColliderDisabled, RigidBody};
 use bevy::{asset::RenderAssetUsages, prelude::*, render::storage::ShaderBuffer};
@@ -11,13 +11,13 @@ use crate::{
         WorldChunks,
     },
     grid::{chunk_of, chunk_origin},
-    render::clipmap::{ClipmapSurfaces, TerrainHeightMapMesh, spawn_surfaces},
     water_sim::start_simulation,
 };
 
-/// Spawns the water and terrain surfaces of `terrain` and a static collider
-/// per chunk, with the window of active chunks centred on the chunk under
-/// `centre`, and starts the simulation on it.
+/// Brings up `terrain` with a static collider per chunk and the window of
+/// active chunks centred on the chunk under `centre`, and starts the
+/// simulation on it. Nothing is drawn until a renderer crate's command spawns
+/// the surfaces, queued after this one.
 ///
 /// Queue it once, from a system running in [`WateryTerrainPlugin`]'s state;
 /// leaving that state despawns what it spawned. The window then follows the
@@ -28,40 +28,19 @@ use crate::{
 pub struct SpawnWateryTerrain {
     pub terrain: WorldChunks,
     pub centre: Vec3,
-    pub clipmap: TerrainHeightMapMesh,
-    /// The water surface's look; the simulation supplies its shape.
-    pub water: StandardMaterial,
-    /// The land surface's look; the terrain supplies its shape.
-    pub land: StandardMaterial,
 }
 
 impl Command for SpawnWateryTerrain {
     type Out = ();
 
     fn apply(self, world: &mut World) {
-        let SpawnWateryTerrain {
-            terrain,
-            centre,
-            clipmap,
-            water,
-            land,
-        } = self;
+        let SpawnWateryTerrain { terrain, centre } = self;
         world
             .run_system_cached_with(spawn, (terrain, centre))
             .expect("spawning the watery terrain");
         world
             .run_system_cached(start_simulation)
             .expect("starting the water simulation");
-        world
-            .run_system_cached_with(
-                spawn_surfaces,
-                ClipmapSurfaces {
-                    clipmap,
-                    water,
-                    land,
-                },
-            )
-            .expect("spawning the terrain surfaces");
     }
 }
 

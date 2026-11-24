@@ -108,3 +108,23 @@ fn normal(x_minus: f32, x_plus: f32, z_minus: f32, z_plus: f32, step: f32) -> ve
     let per_metre = grid::CELLS_PER_METER * 0.5 / step;
     return normalize(vec3f((x_minus - x_plus) * per_metre, 1.0, (z_minus - z_plus) * per_metre));
 }
+
+// Upper edges of the sand, grass and rock bands in metres; snow lies above.
+// Sand is a strip above the 20 m sea level of assets/terrain, and grass and rock
+// meet at about its dry land's median height, with snow on the top quarter.
+const BAND_TOPS = vec3f(22.0, 88.0, 110.0);
+
+// The atlas column (u range) of the material at height `h`, in the order of
+// assets/output/combined/atlas.json.
+fn height_uv_range(h: f32) -> vec2f {
+    if h < BAND_TOPS.x {
+        return vec2f(0.0, 0.25);
+    }
+    if h < BAND_TOPS.y {
+        return vec2f(0.25, 0.5);
+    }
+    if h < BAND_TOPS.z {
+        return vec2f(0.5, 0.75);
+    }
+    return vec2f(0.75, 1.0);
+}

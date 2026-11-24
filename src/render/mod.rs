@@ -1,51 +1,29 @@
-//! Draws the terrain and water surfaces.
-
-pub mod clipmap;
+//! What a renderer crate draws the terrain and water from: the window's
+//! height textures and layout, the shader libraries that define their
+//! surfaces, and the scope and ordering its entities and systems join.
+//!
+//! The shader libraries are imported as `watery_terrain::grid`,
+//! `watery_terrain::render::heightfield` and
+//! `watery_terrain::render::water_column`.
 
 use bevy::{
-    asset::embedded_asset,
-    pbr::ExtendedMaterial,
     prelude::*,
     shader::{ShaderDefVal, ShaderSettings, load_shader_library},
 };
 
-use crate::{
-    WateryTerrainSystems,
-    chunks::{ChunkLayout, shift_window},
-    render::clipmap::{TerrainMaterial, WaterTerrainMaterial, follow, follow_window},
-    water_sim::DRY_DEPTH_MM,
+pub use crate::{
+    TerrainScoped,
+    chunks::{ChunkLayout, WindowHeights, shift_window},
+    water_sim::{DRY_DEPTH_MM, WaterStep},
 };
 
-pub struct TerrainRenderPlugin;
+pub(crate) struct SurfaceShaderPlugin;
 
-impl Plugin for TerrainRenderPlugin {
+impl Plugin for SurfaceShaderPlugin {
     fn build(&self, app: &mut App) {
-        load_shader_library!(app, "terrain.wesl");
-        load_shader_library!(app, "water.wesl", |settings: &mut ShaderSettings| {
+        load_shader_library!(app, "heightfield.wesl");
+        load_shader_library!(app, "water_column.wesl", |settings: &mut ShaderSettings| {
             settings.shader_defs = vec![ShaderDefVal::UInt("DRY_DEPTH_MM".into(), DRY_DEPTH_MM)];
         });
-        load_shader_library!(app, "heightfield.wesl");
-        embedded_asset!(app, "terrain_forward.wesl");
-        embedded_asset!(app, "terrain_prepass.wesl");
-        embedded_asset!(app, "water_forward.wesl");
-        embedded_asset!(app, "water_prepass.wesl");
-
-        app.add_plugins(MaterialPlugin::<
-            ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>,
-        >::default());
-        app.add_plugins(MaterialPlugin::<
-            ExtendedMaterial<StandardMaterial, TerrainMaterial>,
-        >::default());
-
-        app.add_systems(
-            Update,
-            (
-                follow,
-                follow_window
-                    .after(shift_window)
-                    .run_if(resource_exists_and_changed::<ChunkLayout>),
-            )
-                .in_set(WateryTerrainSystems),
-        );
     }
 }

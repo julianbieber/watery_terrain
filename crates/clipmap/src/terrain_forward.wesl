@@ -1,8 +1,8 @@
-// Vertex entry point of the terrain material in the depth, normal and deferred
-// prepasses.
+// Vertex entry point of the terrain material in the main (forward) pass.
 
-import bevy_pbr::prepass::io::{Vertex, VertexOutput};
-import package::render::terrain;
+import bevy_pbr::render::forward_io::{Vertex, VertexOutput};
+import package::terrain;
+import watery_terrain::render::heightfield;
 
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
@@ -10,8 +10,9 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     out.world_position = displaced.world_position;
     out.position = displaced.clip_position;
-    @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS)
     out.world_normal = displaced.height.yzw;
+    @if(VERTEX_TANGENTS)
+    out.world_tangent = heightfield::tangent(displaced.height.yzw);
     out.uv = displaced.uv;
     return out;
 }
