@@ -11,7 +11,8 @@ use bevy::{
 
 use crate::{
     WateryTerrainSystems,
-    render::clipmap::{TerrainMaterial, WaterTerrainMaterial, follow},
+    chunks::{ChunkLayout, shift_window},
+    render::clipmap::{TerrainMaterial, WaterTerrainMaterial, follow, follow_window},
     water_sim::DRY_DEPTH_MM,
 };
 
@@ -36,6 +37,15 @@ impl Plugin for TerrainRenderPlugin {
             ExtendedMaterial<StandardMaterial, TerrainMaterial>,
         >::default());
 
-        app.add_systems(Update, follow.in_set(WateryTerrainSystems));
+        app.add_systems(
+            Update,
+            (
+                follow,
+                follow_window
+                    .after(shift_window)
+                    .run_if(resource_exists_and_changed::<ChunkLayout>),
+            )
+                .in_set(WateryTerrainSystems),
+        );
     }
 }
