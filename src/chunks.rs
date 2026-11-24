@@ -25,9 +25,13 @@ use crate::{
         chunk_origin, texel_of,
     },
     heightmap::Heightmap,
-    render::clipmap::FollowTerrainMarker,
     water_sim::{ChunkGpuReady, coarse_window_texture},
 };
+
+/// The entity the chunk window follows, and any renderer's surfaces with it.
+/// The systems that follow it do nothing unless exactly one exists.
+#[derive(Component)]
+pub struct FollowTerrainMarker;
 
 /// How far, in metres, the camera has to leave the centre chunk on an axis
 /// before the window follows it on that axis.
@@ -416,7 +420,9 @@ pub struct LeavingChunk {
 #[derive(Component)]
 pub struct Parked;
 
-pub(crate) fn shift_window(
+/// Moves the window under the [`FollowTerrainMarker`] entity, changing
+/// [`ChunkLayout`]; a renderer that follows the window orders after it.
+pub fn shift_window(
     mut commands: Commands,
     camera: Single<&Transform, With<FollowTerrainMarker>>,
     mut layout: ResMut<ChunkLayout>,

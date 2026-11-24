@@ -10,9 +10,10 @@ use bevy::{
 };
 use bevy_sky_gradient::plugin::SkyboxMagnetTag;
 use watery_terrain::{
-    FollowTerrainMarker, SpawnWateryTerrain, TerrainHeightMapMesh, WaterDisplacement, WaterSink,
-    WaterSource, WateryTerrainPlugin, WorldChunks,
+    FollowTerrainMarker, SpawnWateryTerrain, WaterDisplacement, WaterSink, WaterSource,
+    WateryTerrainPlugin, WorldChunks,
 };
+use watery_terrain_clipmap::{ClipmapPlugin, SpawnClipmapSurfaces, TerrainHeightMapMesh};
 
 use crate::screens::Screen;
 
@@ -29,6 +30,7 @@ impl Plugin for GameplayPlugin {
         app.add_plugins(WateryTerrainPlugin {
             active: Screen::Gameplay,
         });
+        app.add_plugins(ClipmapPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_player_camera);
         app.add_plugins(FreeCameraPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_scene);
@@ -120,6 +122,8 @@ fn spawn_scene(
     commands.queue(SpawnWateryTerrain {
         terrain: WorldChunks::load(TERRAIN_DIR),
         centre: CAMERA_SPAWN,
+    });
+    commands.queue(SpawnClipmapSurfaces {
         clipmap: TerrainHeightMapMesh {
             smallest_quad: 0.1,
             rings: 5,

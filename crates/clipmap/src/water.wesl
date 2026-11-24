@@ -1,8 +1,9 @@
 // Displacement of the water clipmap onto the simulated water surface, shared
 // by the forward and prepass vertex entry points.
 
-import package::grid;
-import package::render::heightfield;
+import watery_terrain::grid;
+import watery_terrain::render::heightfield;
+import watery_terrain::render::water_column;
 import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
@@ -20,45 +21,24 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(109) var coarse_base_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var<uniform> centre: vec2u;
 
-const DRY_DEPTH: f32 = f32(constants::DRY_DEPTH_MM) / 1000.0;
-
-struct Column {
-    water: f32,
-    ground: f32,
-}
-
-// Water and ground of world cell `cell`; outside the centre chunk the water
-// reaches up to its coarse cell's surface, and is dry while that is.
-fn column(cell: vec2i) -> Column {
-    let texel = grid::window_texel(cell, window_origin);
-    let ground = textureLoad(base_height_texture, texel, 0).r;
-    let chunk = vec2u(clamp(cell, vec2i(0), vec2i(i32(grid::WORLD_DIM) - 1))) / grid::CHUNK_DIM;
-    if all(chunk == centre) {
-        return Column(textureLoad(water_height_texture, texel, 0).r, ground);
-    }
-    let coarse_cell = vec2i(floor(vec2f(cell) / f32(grid::COARSE_FACTOR)));
-    let coarse_texel = grid::coarse_window_texel(coarse_cell, window_origin);
-    let coarse_water = textureLoad(coarse_water_texture, coarse_texel, 0).r;
-    if coarse_water <= DRY_DEPTH {
-        return Column(0.0, ground);
-    }
-    let surface = textureLoad(coarse_base_texture, coarse_texel, 0).r + coarse_water;
-    return Column(max(surface - ground, 0.0), ground);
+fn column(cell: vec2i) -> water_column::Column {
+    return water_column::column(
+        water_height_texture,
+        base_height_texture,
+        coarse_water_texture,
+        coarse_base_texture,
+        cell,
+        window_origin,
+        centre,
+    );
 }
 
 fn surface(cell: vec2i) -> f32 {
-    let c = column(cell);
-    return c.water + c.ground;
+    return water_column::surface(column(cell));
 }
 
-// Height the water is drawn at: its surface where there is water, just
-// below the terrain where there is none, so dry ground hides it.
 fn drawn(cell: vec2i) -> f32 {
-    let c = column(cell);
-    if c.water <= DRY_DEPTH {
-        return c.ground - 0.1;
-    }
-    return c.water + c.ground;
+    return water_column::drawn(column(cell));
 }
 
 fn sample_surface(cell: vec2f) -> f32 {

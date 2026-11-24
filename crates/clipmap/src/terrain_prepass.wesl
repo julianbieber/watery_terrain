@@ -1,12 +1,12 @@
-// Vertex entry point of the water material in the depth, normal and deferred
+// Vertex entry point of the terrain material in the depth, normal and deferred
 // prepasses.
 
 import bevy_pbr::prepass::io::{Vertex, VertexOutput};
-import package::render::water;
+import package::terrain;
 
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
-    let displaced = water::displace(vertex.instance_index, vertex.position, vertex.uv.x);
+    let displaced = terrain::displace(vertex.instance_index, vertex.position, vertex.uv.x);
     var out: VertexOutput;
     out.world_position = displaced.world_position;
     out.position = displaced.clip_position;

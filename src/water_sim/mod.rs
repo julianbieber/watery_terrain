@@ -161,10 +161,17 @@ impl Plugin for WaterSimPlugin {
             RenderGraph,
             (swap_chunks, run_water_sim)
                 .chain()
+                .in_set(WaterStep)
                 .in_set(RenderGraphSystems::Begin),
         );
     }
 }
+
+/// The render-graph systems that bring entering chunks into [`WindowHeights`]
+/// and advance the water in it; a renderer reading those textures in the
+/// render graph orders after this set.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WaterStep;
 
 /// The wind over the simulated water: a pressure head of `head` metres of
 /// water, rising and falling in crests `wavelength` metres apart, travels at

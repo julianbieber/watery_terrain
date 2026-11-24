@@ -6233,6 +6233,15 @@ dependencies = [
  "log",
  "tracing",
  "watershed",
+ "watery_terrain_clipmap",
+]
+
+[[package]]
+name = "watery_terrain_clipmap"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "watery_terrain",
 ]
 
 [[package]]

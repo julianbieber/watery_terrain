@@ -1,11 +1,12 @@
-//! Chunked terrain with a GPU shallow-water simulation on it, drawn, colliding
-//! and simulated in a window of chunks that follows one entity, for a Bevy app
-//! to add with [`WateryTerrainPlugin`] and bring up with [`SpawnWateryTerrain`].
+//! Chunked terrain with a GPU shallow-water simulation on it, colliding and
+//! simulated in a window of chunks that follows one entity, for a Bevy app to
+//! add with [`WateryTerrainPlugin`] and bring up with [`SpawnWateryTerrain`].
+//! Drawing it is a renderer crate's job, built on [`render`].
 
 mod chunks;
 pub mod grid;
 mod heightmap;
-mod render;
+pub mod render;
 mod setup;
 mod water_sim;
 
@@ -13,12 +14,11 @@ use avian3d::{PhysicsPlugins, prelude::PhysicsSchedulePlugin};
 use bevy::prelude::*;
 
 use crate::{
-    chunks::ChunkPlugin, grid::GridPlugin, render::TerrainRenderPlugin, water_sim::WaterSimPlugin,
+    chunks::ChunkPlugin, grid::GridPlugin, render::SurfaceShaderPlugin, water_sim::WaterSimPlugin,
 };
 
 pub use crate::{
-    chunks::WorldChunks,
-    render::clipmap::{FollowTerrainMarker, TerrainHeightMapMesh},
+    chunks::{FollowTerrainMarker, WorldChunks},
     setup::SpawnWateryTerrain,
     water_sim::{
         DEFAULT_WIND_DEGREES, DEFAULT_WIND_HEAD, DEFAULT_WIND_SPEED, DEFAULT_WIND_WAVELENGTH,
@@ -26,7 +26,7 @@ pub use crate::{
     },
 };
 
-/// Simulates, draws and collides the terrain and its water while the app is in
+/// Simulates and collides the terrain and its water while the app is in
 /// the state `active`. Leaving it stops the simulation, despawns every entity
 /// [`SpawnWateryTerrain`] and the simulation spawned, and drops the world with
 /// its GPU state; a new [`SpawnWateryTerrain`] brings one up again.
@@ -41,8 +41,9 @@ pub struct WateryTerrainPlugin<S: States> {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WateryTerrainSystems;
 
+/// An entity that leaving [`WateryTerrainPlugin`]'s state despawns.
 #[derive(Component, Default)]
-struct TerrainScoped;
+pub struct TerrainScoped;
 
 impl<S: States> Plugin for WateryTerrainPlugin<S> {
     fn build(&self, app: &mut App) {
@@ -60,7 +61,7 @@ impl<S: States> Plugin for WateryTerrainPlugin<S> {
                 water_sim::stop_simulation,
             ),
         );
-        app.add_plugins((GridPlugin, ChunkPlugin, WaterSimPlugin, TerrainRenderPlugin));
+        app.add_plugins((GridPlugin, ChunkPlugin, WaterSimPlugin, SurfaceShaderPlugin));
     }
 }
 

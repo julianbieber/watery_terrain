@@ -1,8 +1,8 @@
 // Displacement of the terrain clipmap by the height texture, shared by the
 // forward and prepass vertex entry points.
 
-import package::grid;
-import package::render::heightfield;
+import watery_terrain::grid;
+import watery_terrain::render::heightfield;
 import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
@@ -43,26 +43,6 @@ fn get_height(placement: heightfield::Placement) -> vec4f {
     return vec4f(morphed_height(cell, placement), n);
 }
 
-// Upper edges of the sand, grass and rock bands in metres; snow lies above.
-// Sand is a strip above the 20 m sea level of assets/terrain, and grass and rock
-// meet at about its dry land's median height, with snow on the top quarter.
-const BAND_TOPS = vec3f(22.0, 88.0, 110.0);
-
-// The atlas column (u range) of the material at height `h`, in the order of
-// assets/output/combined/atlas.json.
-fn height_uv_range(h: f32) -> vec2f {
-    if h < BAND_TOPS.x {
-        return vec2f(0.0, 0.25);
-    }
-    if h < BAND_TOPS.y {
-        return vec2f(0.25, 0.5);
-    }
-    if h < BAND_TOPS.z {
-        return vec2f(0.5, 0.75);
-    }
-    return vec2f(0.75, 1.0);
-}
-
 // A clipmap vertex moved onto the terrain surface. `height` is the sampled
 // height followed by the surface normal.
 struct Displaced {
@@ -79,7 +59,7 @@ fn displace(instance_index: u32, local_position: vec3f, quad: f32) -> Displaced 
     let world_position = vec4f(placement.world_xz.x, height.x, placement.world_xz.y, 1.0);
 
     let tiled_uv = heightfield::tiled_uv(world_position.xz);
-    let u_range = height_uv_range(height.x);
+    let u_range = heightfield::height_uv_range(height.x);
     let uv = vec2f(mix(u_range.x, u_range.y, fract(tiled_uv.x)), tiled_uv.y);
 
     return Displaced(world_position, position_world_to_clip(world_position.xyz), height, uv);

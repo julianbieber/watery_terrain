@@ -1,0 +1,12 @@
+[package]
+name = "watery_terrain_clipmap"
+version = "0.1.0"
+edition = "2024"
+description = "The terrain and water of watery_terrain drawn as camera-following clipmap meshes displaced onto the window heightfields."
+
+[dependencies]
+bevy.workspace = true
+watery_terrain.workspace = true
+
+[lints]
+workspace = true

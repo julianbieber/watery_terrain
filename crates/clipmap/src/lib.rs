@@ -1,26 +1,67 @@
-//! The camera-following clipmap mesh the terrain and the water are drawn
-//! with, and the materials that displace it onto their heightfields.
+//! The terrain and water of `watery_terrain` drawn as camera-following
+//! clipmap meshes, displaced onto the window's heightfields in the vertex
+//! shader and lit by Bevy's PBR from the host's materials. Add
+//! [`ClipmapPlugin`] beside `WateryTerrainPlugin` and queue
+//! [`SpawnClipmapSurfaces`] after `SpawnWateryTerrain`.
 
 use bevy::{
-    asset::{AssetPath, RenderAssetUsages, embedded_path},
+    asset::{AssetPath, RenderAssetUsages, embedded_asset, embedded_path},
     camera::visibility::NoFrustumCulling,
     mesh::PrimitiveTopology,
     pbr::{ExtendedMaterial, MaterialExtension},
     platform::collections::HashMap,
     prelude::*,
     render::render_resource::{AsBindGroup, ShaderType},
-    shader::ShaderRef,
+    shader::{ShaderRef, load_shader_library},
+};
+use watery_terrain::{
+    FollowTerrainMarker, WateryTerrainSystems,
+    render::{ChunkLayout, TerrainScoped, WindowHeights, shift_window},
 };
 
-use crate::{
-    TerrainScoped,
-    chunks::{ChunkLayout, WindowHeights},
-};
+pub struct ClipmapPlugin;
 
-/// The entity the clipmaps and the chunk window follow. The systems that
-/// follow it do nothing unless exactly one exists.
-#[derive(Component)]
-pub struct FollowTerrainMarker;
+impl Plugin for ClipmapPlugin {
+    fn build(&self, app: &mut App) {
+        load_shader_library!(app, "terrain.wesl");
+        load_shader_library!(app, "water.wesl");
+        embedded_asset!(app, "terrain_forward.wesl");
+        embedded_asset!(app, "terrain_prepass.wesl");
+        embedded_asset!(app, "water_forward.wesl");
+        embedded_asset!(app, "water_prepass.wesl");
+        app.add_plugins(MaterialPlugin::<WaterSurface>::default());
+        app.add_plugins(MaterialPlugin::<LandSurface>::default());
+        app.add_systems(
+            Update,
+            (
+                follow,
+                follow_window
+                    .after(shift_window)
+                    .run_if(resource_exists_and_changed::<ChunkLayout>),
+            )
+                .in_set(WateryTerrainSystems),
+        );
+    }
+}
+
+/// Spawns the water and land clipmaps, meshed as `clipmap` and looking like
+/// `water` and `land`, over the window `SpawnWateryTerrain` brought up; queue
+/// it after that command. The heightfields supply their shape.
+pub struct SpawnClipmapSurfaces {
+    pub clipmap: TerrainHeightMapMesh,
+    pub water: StandardMaterial,
+    pub land: StandardMaterial,
+}
+
+impl Command for SpawnClipmapSurfaces {
+    type Out = ();
+
+    fn apply(self, world: &mut World) {
+        world
+            .run_system_cached_with(spawn_surfaces, self)
+            .expect("spawning the clipmap surfaces");
+    }
+}
 
 /// A clipmap mesh that [`follow`] keeps under the [`FollowTerrainMarker`].
 #[derive(Component)]
@@ -39,18 +80,11 @@ pub fn follow(
     }
 }
 
-/// How the water and land clipmaps look and are meshed.
-pub(crate) struct ClipmapSurfaces {
-    pub clipmap: TerrainHeightMapMesh,
-    pub water: StandardMaterial,
-    pub land: StandardMaterial,
-}
-
 type WaterSurface = ExtendedMaterial<StandardMaterial, WaterTerrainMaterial>;
 type LandSurface = ExtendedMaterial<StandardMaterial, TerrainMaterial>;
 
-pub(crate) fn spawn_surfaces(
-    In(surfaces): In<ClipmapSurfaces>,
+fn spawn_surfaces(
+    In(surfaces): In<SpawnClipmapSurfaces>,
     mut commands: Commands,
     heights: Res<WindowHeights>,
     layout: Res<ChunkLayout>,
@@ -58,7 +92,7 @@ pub(crate) fn spawn_surfaces(
     mut water_materials: ResMut<Assets<WaterSurface>>,
     mut land_materials: ResMut<Assets<LandSurface>>,
 ) {
-    let ClipmapSurfaces {
+    let SpawnClipmapSurfaces {
         clipmap,
         water,
         land,
@@ -97,7 +131,7 @@ pub(crate) fn spawn_surfaces(
     ));
 }
 
-pub(crate) fn follow_window(
+fn follow_window(
     layout: Res<ChunkLayout>,
     water_surfaces: Query<&MeshMaterial3d<WaterSurface>>,
     land_surfaces: Query<&MeshMaterial3d<LandSurface>>,
