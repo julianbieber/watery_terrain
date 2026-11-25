@@ -66,8 +66,8 @@ check-web:
 	  --target {{WASM_TARGET}}
 
 # Point wgsl-analyzer at the WESL sources of the bevy version in Cargo.lock.
-# src/wesl.toml depends on the packages this writes to .wesl-deps/; rerun after
-# every bevy bump.
+# The wesl.toml beside the shaders of src/ and of each crate depends on the
+# packages this writes to .wesl-deps/; rerun after every bevy bump.
 wesl-deps:
 	#!/usr/bin/env python3
 	import json, pathlib, shutil, subprocess
