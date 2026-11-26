@@ -26,20 +26,25 @@ fn same_surface(t: f32) -> f32 {
     return 0.02 + t * 1e-3;
 }
 
-fn tangent(normal: vec3f) -> vec4f {
+fn tangent(normal: vec3f, u_direction: f32) -> vec4f {
     if abs(normal.z) > 0.999 {
-        return vec4f(heightfield::NORMAL_MAP_STRENGTH, 0.0, 0.0, 1.0);
+        return vec4f(heightfield::NORMAL_MAP_STRENGTH * u_direction, 0.0, 0.0, u_direction);
     }
-    return heightfield::tangent(normal);
+    return heightfield::tangent(normal, u_direction);
 }
 
 fn texture_uv(position: vec3f, land: bool) -> vec2f {
-    let tiled = heightfield::tiled_uv(position.xz);
     if !land {
-        return tiled;
+        return heightfield::tiled_uv(position.xz);
     }
-    let u_range = heightfield::height_uv_range(position.y);
-    return vec2f(mix(u_range.x, u_range.y, fract(tiled.x)), tiled.y);
+    return heightfield::atlas_uv(position.xz, position.y);
+}
+
+fn texture_u_direction(position: vec3f, land: bool) -> f32 {
+    if !land {
+        return 1.0;
+    }
+    return heightfield::atlas_u_direction(position.xz);
 }
 
 @vertex
@@ -86,7 +91,7 @@ fn fragment(in: sdf::ProxyOutput) -> Output {
     @if(VERTEX_UVS_A)
     vertex.uv = texture_uv(hit.position, land);
     @if(VERTEX_TANGENTS)
-    vertex.world_tangent = tangent(normal);
+    vertex.world_tangent = tangent(normal, texture_u_direction(hit.position, land));
     @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     vertex.instance_index = in.instance_index;
 
