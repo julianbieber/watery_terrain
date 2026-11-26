@@ -1,6 +1,7 @@
 //! A scene to fly through over the shipped terrain, with floating spheres, a
-//! spring and a drain: the library at work in a host app with its own menus,
-//! sky and camera, drawn with the clipmap renderer.
+//! boat the arrow keys sail, a spring and a drain: the library at work in a
+//! host app with its own menus, sky and camera, drawn with the clipmap
+//! renderer.
 
 #![recursion_limit = "256"]
 

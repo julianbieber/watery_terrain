@@ -264,7 +264,7 @@ pub struct WaterColumn {
     pub velocity: Vec2,
 }
 
-fn submerged_fraction(column: &WaterColumn, height: f32, radius: f32) -> f32 {
+pub(crate) fn submerged_fraction(column: &WaterColumn, height: f32, radius: f32) -> f32 {
     if column.depth <= DRY_DEPTH {
         return 0.0;
     }

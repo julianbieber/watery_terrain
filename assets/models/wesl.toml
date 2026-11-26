@@ -1,0 +1,7 @@
+# The sdf_mesh project of the demo's models: `mise run mesh shaders/<scene>.wesl`
+# opens a scene, and B in the viewer bakes it to bake/<scene>.glb.
+edition = "2026_pre"
+root = "shaders"
+
+[dependencies]
+sdf_mesh = { path = ".sdf_mesh" }
