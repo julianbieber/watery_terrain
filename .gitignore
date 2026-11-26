@@ -12,3 +12,6 @@ assets/noise
 /assets/terrain/terrain.ron
 /assets/terrain/chunk_*
 /assets/terrain/.release
+
+# The sdf_mesh package copy the language server reads, written by `mise run mesh`
+/assets/models/.sdf_mesh

@@ -1,8 +1,10 @@
 //! Chunked terrain with a GPU shallow-water simulation on it, colliding and
-//! simulated in a window of chunks that follows one entity, for a Bevy app to
-//! add with [`WateryTerrainPlugin`] and bring up with [`SpawnWateryTerrain`].
+//! simulated in a window of chunks that follows one entity, with boats on it,
+//! for a Bevy app to add with [`WateryTerrainPlugin`] and bring up with
+//! [`SpawnWateryTerrain`].
 //! Drawing it is a renderer crate's job, built on [`render`].
 
+mod boat;
 mod chunks;
 pub mod grid;
 mod heightmap;
@@ -14,10 +16,12 @@ use avian3d::{PhysicsPlugins, prelude::PhysicsSchedulePlugin};
 use bevy::prelude::*;
 
 use crate::{
-    chunks::ChunkPlugin, grid::GridPlugin, render::SurfaceShaderPlugin, water_sim::WaterSimPlugin,
+    boat::BoatPlugin, chunks::ChunkPlugin, grid::GridPlugin, render::SurfaceShaderPlugin,
+    water_sim::WaterSimPlugin,
 };
 
 pub use crate::{
+    boat::{Boat, BoatHull},
     chunks::{FollowTerrainMarker, WorldChunks},
     setup::SpawnWateryTerrain,
     water_sim::{
@@ -61,7 +65,13 @@ impl<S: States> Plugin for WateryTerrainPlugin<S> {
                 water_sim::stop_simulation,
             ),
         );
-        app.add_plugins((GridPlugin, ChunkPlugin, WaterSimPlugin, SurfaceShaderPlugin));
+        app.add_plugins((
+            GridPlugin,
+            ChunkPlugin,
+            WaterSimPlugin,
+            SurfaceShaderPlugin,
+            BoatPlugin,
+        ));
     }
 }
 

@@ -1,18 +1,22 @@
-//! The demo scene a free camera flies through and its physics.
+//! The demo scene a free camera flies through and its physics, with a boat
+//! the arrow keys sail.
 
-use avian3d::prelude::{Collider, GravityScale, LinearVelocity, RigidBody};
+use avian3d::prelude::{
+    Collider, Forces, GravityScale, LinearVelocity, RigidBody, WriteRigidBodyForces,
+};
 use bevy::{
     camera::Exposure,
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
     core_pipeline::prepass::DepthPrepass,
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     light::CascadeShadowConfigBuilder,
+    mesh::VertexAttributeValues,
     prelude::*,
 };
 use bevy_sky_gradient::plugin::SkyboxMagnetTag;
 use watery_terrain::{
-    FollowTerrainMarker, SpawnWateryTerrain, WaterDisplacement, WaterSink, WaterSource,
-    WateryTerrainPlugin, WorldChunks,
+    Boat, BoatHull, FollowTerrainMarker, SpawnWateryTerrain, WaterDisplacement, WaterSink,
+    WaterSource, WateryTerrainPlugin, WateryTerrainSystems, WorldChunks,
 };
 use watery_terrain_clipmap::{ClipmapPlugin, SpawnClipmapSurfaces, TerrainHeightMapMesh};
 use watery_terrain_sdf::{SdfPlugin, SdfShape, SpawnSdfSurfaces};
@@ -52,6 +56,13 @@ impl Plugin for GameplayPlugin {
         app.add_plugins(FreeCameraPlugin);
         app.add_systems(OnEnter(Screen::Gameplay), spawn_scene);
         app.add_systems(Update, circle_spheres.run_if(in_state(Screen::Gameplay)));
+        app.add_systems(Update, paint_boat_model.run_if(in_state(Screen::Gameplay)));
+        app.add_systems(
+            FixedUpdate,
+            steer_boat
+                .before(WateryTerrainSystems)
+                .run_if(in_state(Screen::Gameplay)),
+        );
     }
 }
 
@@ -105,6 +116,30 @@ const CIRCLING_RADIUS: f32 = 2.5;
 
 #[derive(Component)]
 struct CirclingSphere;
+
+const BOAT_SPAWN: Vec3 = Vec3::new(POND.x - 4.0, POND.y + 2.0, POND.z + 6.0);
+
+const BOAT_LENGTH: f32 = 2.2;
+
+const BOAT_HULL_RADIUS: f32 = 0.45;
+
+const BOAT_MODEL: &str = "models/bake/boat.glb";
+
+const BOAT_MODEL_DRAFT: f32 = 0.1;
+
+const BOAT_THRUST: f32 = 3.0;
+
+const BOAT_RUDDER: f32 = 2.0;
+
+const BOAT_PAINT: [Srgba; 4] = [
+    Srgba::rgb(0.36, 0.2, 0.1),
+    Srgba::rgb(0.72, 0.55, 0.34),
+    Srgba::rgb(0.25, 0.18, 0.12),
+    Srgba::rgb(0.93, 0.9, 0.82),
+];
+
+#[derive(Component)]
+struct BoatModel(Handle<Mesh>);
 
 fn spawn_player_camera(mut commands: Commands, shadows: Res<Shadows>, renderer: Res<Renderer>) {
     let mut camera = commands.spawn((
@@ -188,6 +223,30 @@ fn spawn_scene(
         POND + Vec3::new(-8.0, DROP_HEIGHT, 0.0),
         &mut meshes,
         standard_materials.add(Color::srgb_u8(24, 144, 255)),
+    ));
+    let model = asset_server.load(
+        GltfAssetLabel::Primitive {
+            mesh: 0,
+            primitive: 0,
+        }
+        .from_asset(BOAT_MODEL),
+    );
+    commands.spawn((
+        DespawnOnExit(Screen::Gameplay),
+        Transform::from_translation(BOAT_SPAWN),
+        Boat {
+            length: BOAT_LENGTH,
+            radius: BOAT_HULL_RADIUS,
+        },
+        BoatModel(model.clone()),
+        children![(
+            Transform::from_xyz(0.0, -BOAT_MODEL_DRAFT, 0.0),
+            Mesh3d(model),
+            MeshMaterial3d(standard_materials.add(StandardMaterial {
+                perceptual_roughness: 0.8,
+                ..default()
+            })),
+        )],
     ));
     commands.spawn((
         DespawnOnExit(Screen::Gameplay),
@@ -273,5 +332,64 @@ fn circle_spheres(mut spheres: Query<&mut LinearVelocity, With<CirclingSphere>>,
     for mut velocity in &mut spheres {
         velocity.0.x = -angle.sin() * CIRCLING_SPEED;
         velocity.0.z = angle.cos() * CIRCLING_SPEED;
+    }
+}
+
+fn paint_boat_model(
+    mut events: MessageReader<AssetEvent<Mesh>>,
+    boats: Query<&BoatModel>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for event in events.read() {
+        let AssetEvent::LoadedWithDependencies { id } = event else {
+            continue;
+        };
+        if !boats.iter().any(|model| model.0.id() == *id) {
+            continue;
+        }
+        let Some(mut mesh) = meshes.get_mut(*id) else {
+            continue;
+        };
+        let Some(VertexAttributeValues::Float32x4(weights)) =
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR).cloned()
+        else {
+            continue;
+        };
+        let paint: Vec<[f32; 4]> = weights.iter().map(|w| paint_of(*w)).collect();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, paint);
+    }
+}
+
+fn paint_of(weights: [f32; 4]) -> [f32; 4] {
+    let total = weights.iter().sum::<f32>().max(f32::EPSILON);
+    let rgb = weights
+        .iter()
+        .zip(BOAT_PAINT)
+        .fold(Vec3::ZERO, |sum, (w, paint)| {
+            sum + paint.to_vec3() * (w / total)
+        });
+    [rgb.x, rgb.y, rgb.z, 1.0]
+}
+
+fn steer_boat(
+    keys: Res<ButtonInput<KeyCode>>,
+    boats: Query<(&BoatHull, &Transform)>,
+    mut hulls: Query<Forces>,
+) {
+    let thrust = keys.pressed(KeyCode::ArrowUp) as i8 - keys.pressed(KeyCode::ArrowDown) as i8;
+    let turn = keys.pressed(KeyCode::ArrowRight) as i8 - keys.pressed(KeyCode::ArrowLeft) as i8;
+    if thrust == 0 && turn == 0 {
+        return;
+    }
+    for (hull, transform) in &boats {
+        let forward = transform.forward().with_y(0.0).normalize_or_zero();
+        let right = transform.right().with_y(0.0).normalize_or_zero();
+        if let Ok(mut stern) = hulls.get_mut(hull.stern) {
+            stern.apply_linear_acceleration(forward * BOAT_THRUST * f32::from(thrust));
+            stern.apply_linear_acceleration(-right * BOAT_RUDDER * f32::from(turn));
+        }
+        if let Ok(mut bow) = hulls.get_mut(hull.bow) {
+            bow.apply_linear_acceleration(right * BOAT_RUDDER * f32::from(turn));
+        }
     }
 }

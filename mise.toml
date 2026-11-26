@@ -1,3 +1,10 @@
 [tools]
 "cargo:https://github.com/julianbieber/bevy_pbr_generator" = "tag:v0.4"
 "cargo:https://github.com/julianbieber/watershed" = "rev:25af96f590b0b01cb2ef4e930c609fbeeeeea2bc"
+"cargo:https://github.com/julianbieber/sdf_mesh" = "tag:v0.3"
+
+[tasks.mesh]
+description = "Open a scene of assets/models in the sdf_mesh viewer; B bakes it to assets/models/bake/"
+dir = "assets/models"
+usage = 'arg "<scene>" help="the scene file below assets/models, e.g. shaders/boat.wesl"'
+run = 'sdf_mesh package .sdf_mesh && sdf_mesh "${usage_scene}"'
