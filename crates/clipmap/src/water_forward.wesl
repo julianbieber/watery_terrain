@@ -12,7 +12,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position = displaced.clip_position;
     out.world_normal = displaced.height.yzw;
     @if(VERTEX_TANGENTS)
-    out.world_tangent = heightfield::tangent(displaced.height.yzw);
+    out.world_tangent = heightfield::tangent(displaced.height.yzw, 1.0);
     out.uv = displaced.uv;
     return out;
 }

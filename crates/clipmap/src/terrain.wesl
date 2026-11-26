@@ -58,9 +58,7 @@ fn displace(instance_index: u32, local_position: vec3f, quad: f32) -> Displaced 
     let height = get_height(placement);
     let world_position = vec4f(placement.world_xz.x, height.x, placement.world_xz.y, 1.0);
 
-    let tiled_uv = heightfield::tiled_uv(world_position.xz);
-    let u_range = heightfield::height_uv_range(height.x);
-    let uv = vec2f(mix(u_range.x, u_range.y, fract(tiled_uv.x)), tiled_uv.y);
+    let uv = heightfield::atlas_uv(world_position.xz, height.x);
 
     return Displaced(world_position, position_world_to_clip(world_position.xyz), height, uv);
 }

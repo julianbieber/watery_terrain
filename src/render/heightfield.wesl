@@ -94,12 +94,34 @@ fn tiled_uv(world_xz: vec2f) -> vec2f {
     return world_xz / TEXTURE_REPEAT_METRES;
 }
 
-// Vertex tangent for a surface with unit `normal`: along world +x, the
-// direction the texture's u grows, with the bitangent towards -z as Bevy's
-// normal mapping expects for v growing along +z. Its length scales the normal
-// map's bumps, equally along both axes.
-fn tangent(normal: vec3f) -> vec4f {
-    return vec4f(normalize(vec3f(normal.y, -normal.x, 0.0)) * NORMAL_MAP_STRENGTH, 1.0);
+fn mirrored_tile_u(world_xz: vec2f) -> f32 {
+    return 1.0 - abs(fract(tiled_uv(world_xz).x * 0.5) * 2.0 - 1.0);
+}
+
+const ATLAS_COLUMN_INSET: f32 = 8.0 / 8192.0;
+
+// Texture coordinates in the surface atlas for terrain at `height`: u stays
+// inside that height's atlas column, and every other TEXTURE_REPEAT_METRES tile
+// along x shows the textures mirrored, so u never jumps between neighbouring
+// points.
+fn atlas_uv(world_xz: vec2f, height: f32) -> vec2f {
+    let u_range = height_uv_range(height) + vec2f(ATLAS_COLUMN_INSET, -ATLAS_COLUMN_INSET);
+    return vec2f(mix(u_range.x, u_range.y, mirrored_tile_u(world_xz)), tiled_uv(world_xz).y);
+}
+
+// Which way the u of `atlas_uv` grows at `world_xz`: 1 along world +x, -1 on
+// the mirrored tiles, where it grows towards -x.
+fn atlas_u_direction(world_xz: vec2f) -> f32 {
+    return select(-1.0, 1.0, fract(tiled_uv(world_xz).x * 0.5) < 0.5);
+}
+
+// Vertex tangent for a surface with unit `normal` whose texture u grows along
+// world +x (`u_direction` 1) or -x (-1), with the bitangent towards -z either
+// way, as Bevy's normal mapping expects for v growing along +z. Its length
+// scales the normal map's bumps, equally along both axes.
+fn tangent(normal: vec3f, u_direction: f32) -> vec4f {
+    let along_x = normalize(vec3f(normal.y, -normal.x, 0.0)) * NORMAL_MAP_STRENGTH;
+    return vec4f(along_x * u_direction, u_direction);
 }
 
 // Unit normal of the surface from its heights `step` cells to either side of a
