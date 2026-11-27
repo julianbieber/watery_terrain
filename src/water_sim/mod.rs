@@ -264,11 +264,15 @@ pub struct WaterColumn {
     pub velocity: Vec2,
 }
 
+fn ambient_surface(column: &WaterColumn) -> f32 {
+    column.ground + column.depth
+}
+
 pub(crate) fn submerged_fraction(column: &WaterColumn, height: f32, radius: f32) -> f32 {
     if column.depth <= DRY_DEPTH {
         return 0.0;
     }
-    let surface = column.ground + column.depth;
+    let surface = ambient_surface(column);
     let immersion = (surface - (height - radius)).clamp(0.0, radius * 2.0);
     immersion * immersion * (3.0 * radius - immersion) / (4.0 * radius * radius * radius)
 }
@@ -294,16 +298,17 @@ fn collect_displacements(
 ) {
     buffer.buffer.clear();
     for (entity, transform, velocity, w) in d.iter().take(MAX_DISPLACEMENTS) {
-        let submerged = water.0.get(&entity).map_or(0.0, |column| {
-            submerged_fraction(column, transform.translation.y, w.radius)
-        });
+        let height = transform.translation.y;
+        let column = water.0.get(&entity);
+        let submerged = column.map_or(0.0, |column| submerged_fraction(column, height, w.radius));
         let bits = entity.to_bits();
         buffer.buffer.push(Displacement {
             center: transform.translation.xz(),
             velocity: velocity.0.xz(),
             radius: w.radius,
-            height: transform.translation.y,
+            height,
             drag: slip_drag(submerged),
+            surface: column.map_or(height - w.radius, ambient_surface),
             entity: UVec2::new(bits as u32, (bits >> 32) as u32),
         });
     }
@@ -848,6 +853,7 @@ struct Displacement {
     radius: f32,
     height: f32,
     drag: f32,
+    surface: f32,
     entity: UVec2,
 }
 
