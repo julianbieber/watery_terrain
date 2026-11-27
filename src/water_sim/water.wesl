@@ -29,6 +29,7 @@ struct Displacement {
     radius: f32,
     height: f32,
     drag: f32,
+    surface: f32,
     entity: vec2u,
 }
 
@@ -498,7 +499,7 @@ fn immersed_thickness(cell: vec2i, column: vec2f, object: Displacement) -> f32 {
         return 0.0;
     }
     let half_chord = sqrt(chord_squared);
-    let top = min(column.x + column.y, object.height + half_chord);
+    let top = min(object.surface, object.height + half_chord);
     let bottom = max(column.x, object.height - half_chord);
     return max(top - bottom, 0.0);
 }
